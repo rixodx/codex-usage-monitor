@@ -247,9 +247,9 @@ function Paint-State {
         $script:UI.StatusLine.ToolTip= $(if ($s.error) { $s.error } elseif (-not $samePeriod) { '正在切换时间范围' } else { '采集器未更新，请检查本地服务和 Node.js' })
     }
     if ($s.backend) {
-        if ($s.backend.phase -in @('checking','downloading','installing','starting') -or ($s.ok -and $s.backend.phase -ne 'ready')) {
+        if ($s.backend.phase -in @('checking','downloading','verifying','saving','saved','installing','starting') -or ($s.ok -and $s.backend.phase -ne 'ready')) {
             $script:UI.StatusLine.Text=$s.backend.text
-            $script:UI.StatusLine.ToolTip=$s.backend.text+"`n"+$s.backend.error
+            $script:UI.StatusLine.ToolTip=$s.backend.text+"`n"+$s.backend.error+"`n"+$s.backend.downloadPath
         } elseif ($s.ok) {
             $script:UI.StatusLine.Text='v'+$s.backend.currentVersion+' · '+$script:Labels[$s.period]+' · '+$script:Config.interval+'秒'
             $script:UI.StatusLine.ToolTip=$s.backend.text+"`n检查时间："+$s.backend.checkedAt+"`n"+$script:UI.StatusLine.ToolTip

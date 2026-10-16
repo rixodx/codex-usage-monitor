@@ -201,9 +201,17 @@ class BackendManager {
       const percent = length ? Math.min(100, Math.floor(bytes / length * 100)) : 0;
       if (percent !== lastPercent) { lastPercent = percent; this.report('downloading', '下载采集服务 '+percent+'%', { progress: percent }); }
     });
+    this.report('verifying','下载完成，正在校验 SHA-256…',{progress:100});
     verify(data, asset);
-    fs.writeFileSync(file + '.part', data);
-    fs.renameSync(file + '.part', file);
+    this.report('saving','校验通过，正在保存程序…',{downloadPath:file});
+    try {
+      fs.writeFileSync(file + '.part', data);
+      fs.renameSync(file + '.part', file);
+      verify(fs.readFileSync(file),asset);
+    } catch (error) {
+      throw new Error('下载文件保存失败：'+error.message);
+    }
+    this.report('saved','采集服务已保存，准备启动',{downloadPath:file});
     return file;
   }
   start(file, home) {

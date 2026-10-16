@@ -2,6 +2,7 @@ settings.json
 settings.json.tmp
 state.json
 state.json.tmp
+state.json.*.tmp
 refresh.flag
 collector-error.log
 widget-error.log

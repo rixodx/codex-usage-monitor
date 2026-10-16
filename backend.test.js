@@ -68,6 +68,19 @@ test('missing service downloads, verifies, and starts the latest release', async
   assert.equal(f.calls.filter(c=>c[0]==='Stop').length,0);
   verify(fs.readFileSync(path.join(f.manager.cache,'v2.7.2','codex-usage-windows-amd64.exe')),releaseAsset(release()));
 });
+test('download completion is followed by verification and persistence before reporting saved', async t => {
+  const f=fixture(t);
+  const phases=[];
+  f.manager.onUpdate=state=>{
+    phases.push(state.phase);
+    if(state.phase==='saved') {
+      assert.ok(fs.existsSync(state.downloadPath));
+      verify(fs.readFileSync(state.downloadPath),releaseAsset(release()));
+    }
+  };
+  await f.manager.ensure({});
+  assert.deepEqual(phases.filter(phase=>['verifying','saving','saved','ready'].includes(phase)),['verifying','saving','saved','ready']);
+});
 test('corrupt download never stops the old service', async t => {
   const f=fixture(t,'2.6.0');
   f.manager.download=async url=>url.endsWith('/latest')?Buffer.from(JSON.stringify(release())):Buffer.from('tampered');

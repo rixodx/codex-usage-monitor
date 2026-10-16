@@ -88,10 +88,28 @@ async function collect(config, request = fetch) {
   return { ...summarize(summary, report, status, period), baseUrl: base };
 }
 
-function atomicWrite(file, value) {
-  const temp = file + '.tmp';
-  fs.writeFileSync(temp, JSON.stringify(value, null, 2), 'utf8');
-  fs.renameSync(temp, file);
+let writeSequence = 0;
+async function atomicWrite(file, value, io = fs, pause = ms => new Promise(resolve => setTimeout(resolve, ms))) {
+  const temp = file + '.' + process.pid + '.' + (++writeSequence) + '.tmp';
+  try {
+    io.writeFileSync(temp, JSON.stringify(value, null, 2), 'utf8');
+    for (let attempt=0; ; attempt++) {
+      try { io.renameSync(temp, file); return; }
+      catch (error) {
+        if (!['EPERM','EACCES','EBUSY'].includes(error.code) || attempt>=11) throw error;
+        await pause(Math.min(200, 25*(attempt+1)));
+      }
+    }
+  } finally {
+    try { if (io.existsSync(temp)) io.unlinkSync(temp); } catch {}
+  }
+}
+function createStateWriter(file, onError = () => {}, write = atomicWrite) {
+  let tail = Promise.resolve();
+  return value => {
+    tail = tail.then(() => write(file,value)).catch(error => { onError(error); });
+    return tail;
+  };
 }
 
 async function main() {
@@ -99,6 +117,9 @@ async function main() {
   const root = __dirname;
   const configFile = path.join(root, 'settings.json');
   const stateFile = path.join(root, 'state.json');
+  const saveState = createStateWriter(stateFile, error => {
+    try { fs.appendFileSync(path.join(root,'collector-error.log'),new Date().toISOString()+' State write: '+error.message+'\n'); } catch {}
+  });
   let previous = null;
   let stopping = false;
   let currentConfig = {};
@@ -109,13 +130,13 @@ async function main() {
     backendState = value;
     const state = { ...(previous || { ok: false }), backend: value, quota: quotaSnapshot };
     if (previous) previous = state;
-    try { atomicWrite(stateFile,state); } catch {}
+    void saveState(state);
   });
   const quota = new QuotaProvider(value => {
     quotaSnapshot = value;
     if (previous) {
       previous = { ...previous, quota: value };
-      try { atomicWrite(stateFile, previous); } catch { /* Reader may briefly hold the file. */ }
+      void saveState(previous);
     }
   });
   const parentIndex = process.argv.indexOf('--parent-pid');
@@ -135,7 +156,7 @@ async function main() {
       if (!bootstrapPromise && !process.argv.includes('--no-bootstrap')) bootstrapPromise = backend.recover(config);
       void quota.refresh(config);
       previous = { ...await collect(config), quota: quotaSnapshot, backend: backendState };
-      atomicWrite(stateFile, previous);
+      await saveState(previous);
     } catch (error) {
       if (!process.argv.includes('--no-bootstrap')) {
         const recovery = backend.recover(config);
@@ -144,7 +165,7 @@ async function main() {
       const safeMessage = error.name === 'TimeoutError' ? '本地服务响应超时' : error.message;
       const errorState = { ...(previous || {}), quota: quotaSnapshot, backend: backendState, ok: false, error: safeMessage, attemptedAt: new Date().toISOString() };
       previous = errorState;
-      atomicWrite(stateFile, errorState);
+      await saveState(errorState);
       if (process.argv.includes('--once')) { console.error(safeMessage); process.exitCode = 1; }
     }
     if (process.argv.includes('--once')) {
@@ -171,7 +192,7 @@ async function main() {
   quota.close();
 }
 
-module.exports = { bounds, baseUrl, summarize, collect };
+module.exports = { bounds, baseUrl, summarize, collect, atomicWrite, createStateWriter };
 if (require.main === module) main().catch(error => {
   console.error(error.message);
   try { fs.writeFileSync(path.join(__dirname, 'collector-error.log'), error.stack || error.message, 'utf8'); } catch {}

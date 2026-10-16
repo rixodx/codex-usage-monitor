@@ -1,7 +1,36 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { bounds, baseUrl, summarize, collect } = require('./collector');
+const { bounds, baseUrl, summarize, collect, atomicWrite, createStateWriter } = require('./collector');
+
+test('transient Windows sharing errors retry atomic replacement and clean temporary files', async () => {
+  let attempts=0, removed=0, saved=false;
+  const temps=[];
+  const io={
+    writeFileSync: (file,text)=>{temps.push(file);assert.deepEqual(JSON.parse(text),{ok:true});},
+    renameSync: ()=>{attempts++; if(attempts<4) throw Object.assign(new Error('shared file'),{code:'EPERM'}); saved=true;},
+    existsSync: ()=>!saved,
+    unlinkSync: ()=>{removed++;}
+  };
+  await atomicWrite('state.json',{ok:true},io,async()=>{});
+  assert.equal(attempts,4);
+  assert.equal(removed,0);
+  assert.notEqual(temps[0],'state.json.tmp');
+  saved=false; attempts=0;
+  io.renameSync=()=>{attempts++; throw Object.assign(new Error('permanent lock'),{code:'EPERM'});};
+  await assert.rejects(atomicWrite('state.json',{ok:true},io,async()=>{}),/permanent lock/);
+  assert.equal(attempts,12); assert.equal(removed,1);
+});
+test('a failed status save does not kill later updates or the background downloader', async () => {
+  const errors=[], writes=[];
+  const save=createStateWriter('state.json',error=>errors.push(error.message),async(file,state)=>{
+    writes.push(state.progress);
+    if(state.progress===44) throw new Error('EPERM');
+  });
+  await Promise.all([save({progress:44}),save({progress:100}),save({progress:'ready'})]);
+  assert.deepEqual(errors,['EPERM']);
+  assert.deepEqual(writes,[44,100,'ready']);
+});
 
 test('China-local midnight, rolling days, and month boundaries', () => {
   const now = new Date('2026-10-15T16:01:00Z');
