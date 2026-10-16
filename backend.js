@@ -32,7 +32,7 @@ function releaseAsset(release, arch = process.arch) {
   if (!asset || asset.browser_download_url !== expected) throw new Error('正式版缺少对应 Windows 安装包');
   if (!/^sha256:[0-9a-f]{64}$/i.test(asset.digest || '')) throw new Error('正式版缺少 SHA-256 校验值，已停止自动更新');
   return { name, tag: release.tag_name, version: release.tag_name.replace(/^v/, ''),
-    url: expected, digest: asset.digest.slice(7).toLowerCase(), size: Number(asset.size) };
+    url: expected, digest: asset.digest.slice(7).toLowerCase(), size: Number(asset.size) || 0 };
 }
 function trustedUrl(raw) {
   const url = new URL(raw);
@@ -71,7 +71,7 @@ function remoteBuffer(raw, proxy = '', maxBytes = 100 * 1024 * 1024, onProgress 
       if (socket) agent.createConnection = () => socket;
       active = https.request({ protocol: 'https:', hostname: url.hostname, port: url.port || 443,
         path: url.pathname + url.search, method: 'GET', agent,
-        headers: { 'User-Agent': 'CodexUsageWidget/0.3', Accept: 'application/vnd.github+json' } }, response => {
+        headers: { 'User-Agent': 'CodexUsageWidget/0.3', Accept: url.hostname === 'api.github.com' ? 'application/vnd.github+json' : '*/*' } }, response => {
         if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
           response.resume();
           let next;
@@ -116,6 +116,24 @@ function verify(data, asset) {
   const digest = crypto.createHash('sha256').update(data).digest('hex');
   if (digest !== asset.digest) throw new Error('SHA-256 校验失败，未执行下载文件');
 }
+async function latestRelease(download, proxy, arch) {
+  try {
+    const metadata=JSON.parse((await download(RELEASE_API,proxy,2*1024*1024)).toString('utf8'));
+    return releaseAsset(metadata,arch);
+  } catch (apiError) {
+    // Public GitHub REST requests can be rate limited by a shared proxy exit.
+    // The official stable-release redirect and its checksum asset need no API token.
+    const page=(await download('https://github.com/zJay26/codex-usage/releases/latest',proxy,4*1024*1024)).toString('utf8');
+    const canonical=page.match(/<meta\s+property=["']og:url["']\s+content=["'](?:https:\/\/github\.com)?\/zJay26\/codex-usage\/releases\/tag\/(v?\d+\.\d+\.\d+)["']/i);
+    if (!canonical) throw new Error('无法从官方 Release 页面识别最新正式版（'+apiError.message+'）');
+    const tag=canonical[1];
+    const name='codex-usage-windows-'+(arch==='arm64'?'arm64':'amd64')+'.exe';
+    const checksums=(await download(REPOSITORY+tag+'/SHA256SUMS',proxy,65536)).toString('utf8');
+    const entry=checksums.split(/\r?\n/).map(line=>/^([0-9a-f]{64})\s+\*?([^\s]+)\s*$/i.exec(line)).find(row=>row&&row[2]===name);
+    if (!entry) throw new Error('官方 SHA256SUMS 缺少 Windows 文件校验值');
+    return releaseAsset({tag_name:tag,assets:[{name,browser_download_url:REPOSITORY+tag+'/'+name,digest:'sha256:'+entry[1]}]},arch);
+  }
+}
 function execute(file, args, env = process.env, timeout = 15000) {
   return new Promise((resolve, reject) => {
     const child = spawn(file, args, { windowsHide: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -155,7 +173,9 @@ class BackendManager {
     this.pause = options.pause || delay;
     this.attempts = options.attempts || 45;
     this.arch = options.arch || process.arch;
+    this.now = options.now || Date.now;
     this.pending = null;
+    this.retryAt = 0;
   }
   report(phase, text, more = {}) {
     this.state = { ...(this.state || {}), phase, text, ...more, checkedAt: new Date().toISOString() };
@@ -224,35 +244,58 @@ class BackendManager {
     }).finally(() => { this.pending = null; });
     return this.pending;
   }
+  // Called on collector failures as well as first launch. Bound retry frequency
+  // so a stopped service is recovered without hammering GitHub or spawning twice.
+  recover(config = {}) {
+    if (this.pending) return this.pending;
+    if (this.now() < this.retryAt) return null;
+    this.retryAt = this.now() + 30000;
+    const operation = this.ensure(config);
+    void operation.then(() => { this.retryAt = this.now() + 30000; });
+    return operation;
+  }
+  cachedAsset() {
+    const cached = JSON.parse(fs.readFileSync(path.join(this.cache,'release.json'),'utf8'));
+    const asset = releaseAsset(cached,this.arch);
+    verify(fs.readFileSync(path.join(this.cache,asset.tag,asset.name)),asset);
+    return asset;
+  }
   async run(config) {
     const base = serviceBase(config.baseUrl);
     this.report('checking', '检查采集服务版本…', { error:null, warning:null, progress:null, latestVersion:null });
-    const existing = await this.inspect(base.origin);
-    this.report('checking', '检查 GitHub 最新正式版…', { currentVersion: existing?.version || null });
-    const manifestPath = path.join(this.cache,'release.json');
+    let existing = await this.inspect(base.origin);
+    if (existing?.status?.database_path) this.home = path.dirname(existing.status.database_path);
+    // Recover locally first: GitHub may be slow or unavailable without TUN.
+    // The subsequent online check can update this recovered version if needed.
     const proxy = config.updateProxy || process.env.HTTPS_PROXY || process.env.https_proxy || '';
-    let asset, offline = false;
+    if (!existing) {
+      let cached;
+      try { cached = this.cachedAsset(); } catch { /* No verified local cache. */ }
+      if (cached) {
+        this.report('starting','服务已停止，正在从本地缓存恢复…');
+        await this.activate(cached,null,base,proxy,true);
+        existing = await this.inspect(base.origin);
+      }
+    }
+    this.report('checking', '检查 GitHub 最新正式版…', { currentVersion: existing?.version || null });
+    let asset;
     try {
-      const metadata = JSON.parse((await this.download(RELEASE_API,proxy,2*1024*1024)).toString('utf8'));
-      asset = releaseAsset(metadata,this.arch);
+      asset = await latestRelease(this.download,proxy,this.arch);
     } catch (error) {
       if (existing) {
         this.report('warning', 'v'+existing.version+' · 未能核实最新版本', { error: error.message });
         return this.state;
       }
-      try {
-        const cached=JSON.parse(fs.readFileSync(manifestPath,'utf8'));
-        asset=releaseAsset(cached,this.arch);
-        const file=path.join(this.cache,asset.tag,asset.name);
-        verify(fs.readFileSync(file),asset);
-      } catch { throw new Error('本地服务缺失，且无法连接 GitHub 下载；请检查更新代理'); }
-      this.report('starting','离线启动已校验的缓存版本',{ warning:'尚未核实最新版本' });
-      offline = true;
+      throw new Error('本地服务缺失，且无法连接 GitHub 下载；请在本地服务地址设置中填写更新代理。'+error.message);
     }
     if (existing && compare(existing.version,asset.version)>=0) {
       this.report('ready','v'+existing.version+' · 已是最新',{currentVersion:existing.version,latestVersion:asset.version});
       return this.state;
     }
+    return this.activate(asset,existing,base,proxy);
+  }
+  async activate(asset,existing,base,proxy,offline=false) {
+    const manifestPath = path.join(this.cache,'release.json');
     const file=await this.prepare(asset,proxy);
     fs.mkdirSync(this.cache,{recursive:true});
     fs.writeFileSync(manifestPath,JSON.stringify({tag_name:asset.tag,draft:false,prerelease:false,assets:[{name:asset.name,browser_download_url:asset.url,digest:'sha256:'+asset.digest,size:asset.size}]}));
@@ -260,7 +303,8 @@ class BackendManager {
     const reported=executableVersion.match(/(?:^|\s)v?(\d+\.\d+\.\d+)(?:\s|$)/);
     if (!reported || compare(reported[1],asset.version)!==0) throw new Error('下载程序版本不匹配，未停止旧服务');
     const defaultHome=process.env.CODEX_USAGE_HOME || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(),'AppData','Local'),'codex-usage');
-    const home=existing?.status?.database_path ? path.dirname(existing.status.database_path) : defaultHome;
+    const home=existing?.status?.database_path ? path.dirname(existing.status.database_path) : this.home || defaultHome;
+    this.home=home;
     if (!path.isAbsolute(home) || path.parse(home).root===home || path.resolve(home)===path.resolve(os.homedir())) throw new Error('采集服务数据目录不安全');
     const cfgFile=path.join(home,'config.json');
     let serviceConfig={};
@@ -300,4 +344,4 @@ class BackendManager {
   }
 }
 
-module.exports={BackendManager,version,compare,releaseAsset,trustedUrl,verify,remoteBuffer,serviceBase};
+module.exports={BackendManager,version,compare,releaseAsset,trustedUrl,verify,remoteBuffer,serviceBase,latestRelease};

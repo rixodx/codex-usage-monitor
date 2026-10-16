@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { BackendManager, compare, releaseAsset, trustedUrl, verify } = require('./backend');
+const { BackendManager, compare, releaseAsset, trustedUrl, verify, latestRelease } = require('./backend');
 const bytes = Buffer.from('verified upstream fixture');
 const digest = crypto.createHash('sha256').update(bytes).digest('hex');
 function release(tag = 'v2.7.2') {
@@ -137,7 +137,7 @@ test('offline cached startup verifies the cached file and labels latest-version 
   f.manager.download=async ()=>{ throw new Error('offline'); };
   const result=await f.manager.ensure({});
   assert.equal(result.phase,'warning');
-  assert.match(result.text,/离线启动/);
+  assert.match(result.text,/未能核实最新版本/);
   assert.equal(result.latestVersion,null);
   const file=path.join(f.manager.cache,'v2.7.2','codex-usage-windows-amd64.exe');
   fs.writeFileSync(file,'corrupt'); f.setRunning(null);
@@ -151,4 +151,45 @@ test('concurrent startup checks share one operation', async t => {
   assert.equal(a,b);
   await a;
   assert.equal(f.calls.length,1);
+});
+test('cached service starts before a slow GitHub check completes', async t => {
+  const f=fixture(t);
+  await f.manager.ensure({});
+  f.setRunning(null);
+  let releaseNetwork;
+  let networkStarted;
+  const reachedNetwork = new Promise(resolve => { networkStarted=resolve; });
+  f.manager.download=async ()=>{
+    networkStarted();
+    return new Promise(resolve=>{releaseNetwork=()=>resolve(Buffer.from(JSON.stringify(release())));});
+  };
+  const starts=f.calls.filter(c=>c[0]==='start').length;
+  const operation=f.manager.ensure({});
+  await reachedNetwork;
+  assert.equal(f.calls.filter(c=>c[0]==='start').length,starts+1);
+  releaseNetwork(); await operation;
+});
+test('runtime failures recover a stopped service, with retries throttled to 30 seconds', async t => {
+  const f=fixture(t);
+  let clock=100000;
+  f.manager.now=()=>clock;
+  await f.manager.recover({});
+  f.setRunning(null);
+  assert.equal(f.manager.recover({}),null);
+  clock+=30000;
+  const starts=f.calls.filter(c=>c[0]==='start').length;
+  await f.manager.recover({});
+  assert.equal(f.calls.filter(c=>c[0]==='start').length,starts+1);
+});
+test('REST rate limits fall back to the official release page and SHA256SUMS', async () => {
+  const download=async url=>{
+    if(url.includes('api.github.com')) throw new Error('HTTP 403');
+    if(url.endsWith('/latest')) return Buffer.from('<meta property="og:url" content="/zJay26/codex-usage/releases/tag/v2.7.2" />');
+    assert.equal(url,'https://github.com/zJay26/codex-usage/releases/download/v2.7.2/SHA256SUMS');
+    return Buffer.from(digest+'  codex-usage-windows-amd64.exe\n');
+  };
+  const asset=await latestRelease(download,'','x64');
+  assert.equal(asset.version,'2.7.2');
+  verify(bytes,asset);
+  await assert.rejects(latestRelease(async url=>url.endsWith('/latest')&&!url.includes('api.')?Buffer.from('<meta property="og:url" content="https://evil.example/v2.7.2" />'):Promise.reject(new Error('403')),'','x64'));
 });

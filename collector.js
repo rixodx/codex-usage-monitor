@@ -132,11 +132,15 @@ async function main() {
     try {
       if (fs.existsSync(configFile)) config = JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, ''));
       currentConfig = config;
-      if (!bootstrapPromise && !process.argv.includes('--no-bootstrap')) bootstrapPromise = backend.ensure(config);
+      if (!bootstrapPromise && !process.argv.includes('--no-bootstrap')) bootstrapPromise = backend.recover(config);
       void quota.refresh(config);
       previous = { ...await collect(config), quota: quotaSnapshot, backend: backendState };
       atomicWrite(stateFile, previous);
     } catch (error) {
+      if (!process.argv.includes('--no-bootstrap')) {
+        const recovery = backend.recover(config);
+        if (recovery) bootstrapPromise = recovery;
+      }
       const safeMessage = error.name === 'TimeoutError' ? '本地服务响应超时' : error.message;
       const errorState = { ...(previous || {}), quota: quotaSnapshot, backend: backendState, ok: false, error: safeMessage, attemptedAt: new Date().toISOString() };
       previous = errorState;

@@ -132,6 +132,7 @@ if (-not $SelfTest) {
     $script:Mutex = New-Object System.Threading.Mutex($true, ('Local\CodexUsageFloatingWidget_'+$pathHash), [ref]$createdNew)
     if (-not $createdNew) {
         [IO.File]::WriteAllText($script:ShowFlag,'show')
+        [IO.File]::WriteAllText((Join-Path $script:Root 'backend-update.flag'),'')
         $script:Mutex.Dispose(); exit 0
     }
     [IO.File]::WriteAllText((Join-Path $script:Root 'widget-error.log'),'')
