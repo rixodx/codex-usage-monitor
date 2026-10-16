@@ -1,0 +1,13 @@
+settings.json
+settings.json.tmp
+state.json
+state.json.tmp
+refresh.flag
+collector-error.log
+widget-error.log
+ui-status.json
+show.flag
+show.*.flag
+launcher.log
+preview*.png
+*.zip
