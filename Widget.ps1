@@ -1,4 +1,4 @@
-﻿param([switch]$Validate, [switch]$SelfTest)
+﻿param([switch]$Validate, [switch]$SelfTest, [string]$TestStatePath)
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, System.Net.Http
 trap {
@@ -12,7 +12,7 @@ $script:StatePath = Join-Path $script:Root 'state.json'
 $script:ShowFlag = Join-Path $script:Root 'show.flag'
 Add-Type -Path (Join-Path $script:Root 'DesktopIdentity.cs')
 $script:DesktopName=[WidgetDesktopIdentity]::GetName()
-$script:Config = @{ baseUrl='http://127.0.0.1:43189'; period='today'; interval=5; opacity=0.96; topmost=$true; compact=$false; left=$null; top=$null }
+$script:Config = @{ baseUrl='http://127.0.0.1:43189'; period='today'; interval=5; opacity=0.96; topmost=$true; compact=$false; left=$null; top=$null; codexExe='' }
 if (Test-Path -LiteralPath $script:SettingsPath) {
     try {
         $saved = Get-Content -LiteralPath $script:SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -26,7 +26,7 @@ $script:Labels = @{today='今日'; week='近 7 天'; month='本月'; '30days'='�
 
 [xml]$layout = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="Codex Usage 悬浮窗" Width="370" Height="305" MinWidth="370" MinHeight="130" WindowStyle="None"
+ Title="Codex Usage 悬浮窗" Width="370" Height="430" MinWidth="370" MinHeight="130" WindowStyle="None"
  AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize" ShowInTaskbar="True"
  FontFamily="Segoe UI, Microsoft YaHei UI" Foreground="#F3F6F7" Topmost="True" WindowStartupLocation="Manual">
  <Window.Resources>
@@ -60,6 +60,7 @@ $script:Labels = @{today='今日'; week='近 7 天'; month='本月'; '30days'='�
     <Button x:Name="CloseButton" Grid.Column="3" Content="×" ToolTip="退出悬浮窗" AutomationProperties.Name="退出"/>
    </Grid>
    <Grid Grid.Row="1">
+    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="124"/></Grid.RowDefinitions>
     <StackPanel x:Name="FullView" Margin="0,12,0,0">
      <DockPanel Margin="0,0,0,6">
       <TextBlock x:Name="RangeLabel" Text="今日" FontSize="12" Foreground="#91A5AE" DockPanel.Dock="Left"/>
@@ -89,6 +90,22 @@ $script:Labels = @{today='今日'; week='近 7 天'; month='本月'; '30days'='�
      <TextBlock x:Name="CompactTokens" Text="— tokens" FontSize="23" FontWeight="SemiBold" VerticalAlignment="Center"/>
      <TextBlock x:Name="CompactCost" Grid.Column="1" Text="—" Foreground="#68E3BC" FontSize="23" FontWeight="SemiBold" VerticalAlignment="Center"/>
     </Grid>
+    <StackPanel Grid.Row="1" Margin="0,8,0,0">
+     <Border Height="1" Background="#2B383E" Margin="0,0,0,10"/>
+     <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBlock x:Name="FiveHourValue" Text="5 小时 · 等待数据" FontSize="11" Foreground="#E1E9EB"/>
+      <TextBlock x:Name="FiveHourReset" Grid.Column="1" Text="" FontSize="10" Foreground="#7D949E"/>
+     </Grid>
+     <ProgressBar x:Name="FiveHourBar" Height="4" Minimum="0" Maximum="100" Value="0" Foreground="#68E3BC" Background="#29383E" BorderThickness="0" Margin="0,6,0,10"/>
+     <Grid>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBlock x:Name="SevenDayValue" Text="7 天 · 等待数据" FontSize="11" Foreground="#E1E9EB"/>
+      <TextBlock x:Name="SevenDayReset" Grid.Column="1" Text="" FontSize="10" Foreground="#7D949E"/>
+     </Grid>
+     <ProgressBar x:Name="SevenDayBar" Height="4" Minimum="0" Maximum="100" Value="0" Foreground="#68E3BC" Background="#29383E" BorderThickness="0" Margin="0,6,0,9"/>
+     <TextBlock x:Name="QuotaStatus" Text="额度 · 正在读取" FontSize="9" Foreground="#91A5AE" TextTrimming="CharacterEllipsis"/>
+    </StackPanel>
    </Grid>
    <DockPanel Grid.Row="2" VerticalAlignment="Bottom">
     <Button x:Name="DetailButton" Content="完整面板 ↗" FontSize="10" Padding="0,2,4,0" DockPanel.Dock="Right" Foreground="#80BAA9" HorizontalAlignment="Right"/>
@@ -101,7 +118,7 @@ $script:Labels = @{today='今日'; week='近 7 天'; month='本月'; '30days'='�
 $reader = New-Object System.Xml.XmlNodeReader $layout
 $script:Window = [Windows.Markup.XamlReader]::Load($reader)
 $script:UI = @{}
-foreach ($name in @('DragArea','StatusDot','MenuButton','HideButton','CloseButton','FullView','CompactView','RangeLabel','TokenValue','CostValue','InputValue','CacheValue','OutputValue','ModelLine','CoverageLine','CompactTokens','CompactCost','DetailButton','StatusLine')) {
+foreach ($name in @('DragArea','StatusDot','MenuButton','HideButton','CloseButton','FullView','CompactView','RangeLabel','TokenValue','CostValue','InputValue','CacheValue','OutputValue','ModelLine','CoverageLine','CompactTokens','CompactCost','DetailButton','StatusLine','FiveHourValue','FiveHourReset','FiveHourBar','SevenDayValue','SevenDayReset','SevenDayBar','QuotaStatus')) {
     $script:UI[$name] = $script:Window.FindName($name)
 }
 if ($Validate) { Write-Output 'WPF XAML valid; controls loaded.'; exit 0 }
@@ -170,14 +187,15 @@ function Show-Widget {
 }
 function Apply-View {
     if ($script:Config.compact) {
-        $script:UI.FullView.Visibility='Collapsed'; $script:UI.CompactView.Visibility='Visible'; $script:Window.Height=146
+        $script:UI.FullView.Visibility='Collapsed'; $script:UI.CompactView.Visibility='Visible'; $script:Window.Height=270
     } else {
-        $script:UI.FullView.Visibility='Visible'; $script:UI.CompactView.Visibility='Collapsed'; $script:Window.Height=305
+        $script:UI.FullView.Visibility='Visible'; $script:UI.CompactView.Visibility='Collapsed'; $script:Window.Height=430
     }
     $script:UI.RangeLabel.Text = $script:Labels[$script:Config.period]
 }
 function Paint-State {
     $s=$script:LastState
+    Paint-Quota $s.quota
     if (-not $s) { return }
     $samePeriod = $s.period -eq $script:Config.period
     if ($null -ne $s.total -and $samePeriod) {
@@ -222,6 +240,57 @@ function Paint-State {
         $script:UI.StatusLine.Text='等待数据 · 保留上次记录'
         $script:UI.StatusLine.ToolTip= $(if ($s.error) { $s.error } elseif (-not $samePeriod) { '正在切换时间范围' } else { '采集器未更新，请检查本地服务和 Node.js' })
     }
+}
+
+function Paint-Quota($quota) {
+    $stamp=$null
+    if ($quota.observedAt) { try { $stamp=[DateTime]::Parse($quota.observedAt).ToUniversalTime() } catch {} }
+    $age=0
+    if ($stamp) { $age=([DateTime]::UtcNow-$stamp).TotalSeconds }
+    foreach ($pair in @(@{key='fiveHour';prefix='FiveHour';label='5 小时'},@{key='sevenDay';prefix='SevenDay';label='7 天'})) {
+        $value=$quota.($pair.key)
+        $text=$script:UI[($pair.prefix+'Value')]
+        $reset=$script:UI[($pair.prefix+'Reset')]
+        $bar=$script:UI[($pair.prefix+'Bar')]
+        $bar.Value=0; $bar.Foreground='#60747D'
+        $text.Text=$pair.label+' · 未提供'; $reset.Text=''
+        $text.ToolTip='账号未返回该时长的额度；不会将其他额度窗口或 token 数量换算成此项。'
+        $reset.ToolTip=$null
+        if (-not $value -or $null -eq $value.usedPercent) { continue }
+        $percent=[Math]::Max(0,[Math]::Min(100,[double]$value.usedPercent))
+        $expired=$false
+        if ($value.resetsAt) {
+            $resetTime=([DateTime]'1970-01-01T00:00:00Z').ToUniversalTime().AddSeconds([double]$value.resetsAt)
+            $remaining=$resetTime-[DateTime]::UtcNow
+            $expired=$remaining.TotalSeconds -le 0
+            $reset.ToolTip='北京时间 '+[TimeZoneInfo]::ConvertTimeBySystemTimeZoneId($resetTime,'China Standard Time').ToString('MM-dd HH:mm:ss')
+            if ($expired) { $reset.Text='等待更新' }
+            elseif ($remaining.TotalDays -ge 1) { $reset.Text=([Math]::Floor($remaining.TotalDays)).ToString()+'天'+$remaining.Hours+'小时后重置' }
+            elseif ($remaining.TotalHours -ge 1) { $reset.Text=([Math]::Floor($remaining.TotalHours)).ToString()+'小时'+$remaining.Minutes+'分后重置' }
+            else { $reset.Text=([Math]::Max(1,[Math]::Ceiling($remaining.TotalMinutes))).ToString()+'分钟后重置' }
+        } else { $reset.Text='重置时间未知' }
+        if ($expired) {
+            $text.Text=$pair.label+' · 快照已过期'
+            $text.ToolTip='上次已用 '+$percent.ToString('0.#')+'%；已过重置时间，等待新数据。'
+            continue
+        }
+        $text.Text=$pair.label+' · 已用 '+$percent.ToString('0.#')+'%'
+        $text.ToolTip='已用 '+$percent.ToString('0.#')+'%，剩余 '+(100-$percent).ToString('0.#')+'%。'
+        $bar.Value=$percent
+        $bar.Foreground= $(if ($percent -ge 95) { '#F18484' } elseif ($percent -ge 80) { '#E8BF76' } else { '#68E3BC' })
+    }
+    if ($stamp) {
+        $source= $(if ($quota.source -eq 'local') { '本地快照' } elseif ($quota.error -or $age -gt 180) { '上次查询' } else { '实时查询' })
+        $time=[TimeZoneInfo]::ConvertTimeBySystemTimeZoneId($stamp,'China Standard Time').ToString('MM-dd HH:mm')
+        $script:UI.QuotaStatus.Text='额度 · '+$source+' '+$time
+        if ($age -gt 300) { $script:UI.QuotaStatus.Text+='（旧）' }
+        $script:UI.QuotaStatus.ToolTip='额度独立于上方 token 的日期范围。实时查询间隔约 60 秒；本地快照随正常聊天记录更新。'
+    } else {
+        $script:UI.QuotaStatus.Text='额度 · 暂无可用数据'
+        $script:UI.QuotaStatus.ToolTip='请正常登录 Codex。可在 settings.json 设置 codexExe 为 Codex CLI 完整路径。'
+    }
+    if ($quota.error) { $script:UI.QuotaStatus.ToolTip+="`n"+$quota.error; $script:UI.QuotaStatus.Foreground='#C5AD78' }
+    else { $script:UI.QuotaStatus.Foreground='#91A5AE' }
 }
 
 function Show-ConnectionSettings {
@@ -291,6 +360,7 @@ function Show-Menu {
 }
 
 if ($SelfTest) {
+    if ($TestStatePath) { $script:StatePath=$TestStatePath }
     if (-not (Test-Path -LiteralPath $script:StatePath)) { throw 'Run node collector.js --once before SelfTest.' }
     $script:LastState=Get-Content -LiteralPath $script:StatePath -Raw -Encoding UTF8 | ConvertFrom-Json
     $script:Config.period=$script:LastState.period
@@ -318,11 +388,19 @@ if ($SelfTest) {
     if ($script:UI.TokenValue.Text -ne $originalTokens -or $script:UI.StatusLine.Text -notmatch '保留') { throw 'Offline state lost the previous successful data.' }
     $script:LastState.ok=$true
     $script:Config.compact=$true; Apply-View; Paint-State
-    if ($script:UI.CompactView.Visibility -ne 'Visible' -or $script:Window.Height -ne 146) { throw 'Compact view failed.' }
+    if ($script:UI.CompactView.Visibility -ne 'Visible' -or $script:Window.Height -ne 270) { throw 'Compact view failed.' }
     Export-Preview 'preview-compact.png'
     $script:Config.period='week'; Paint-State
     if ($script:UI.CompactTokens.Text -ne '正在切换…') { throw 'Old range values leaked into the new period.' }
-    Write-Output ('WPF live-data rendering, offline retention, compact layout and period switching passed. Tokens: '+$originalTokens)
+    $resetFuture=([DateTime]::UtcNow.AddHours(2)-([DateTime]'1970-01-01T00:00:00Z').ToUniversalTime()).TotalSeconds
+    $testQuota=[pscustomobject]@{source='local';observedAt=[DateTime]::UtcNow.ToString('o');fiveHour=[pscustomobject]@{usedPercent=7;resetsAt=$resetFuture};sevenDay=[pscustomobject]@{usedPercent=6;resetsAt=$resetFuture+86400}}
+    Paint-Quota $testQuota
+    if ($script:UI.FiveHourValue.Text -notmatch '7%' -or $script:UI.SevenDayValue.Text -notmatch '6%' -or $script:UI.FiveHourBar.Value -ne 7) { throw 'Quota windows were not rendered correctly.' }
+    $testQuota.fiveHour=$null; Paint-Quota $testQuota
+    if ($script:UI.FiveHourValue.Text -notmatch '未提供') { throw 'Missing quota appeared as zero usage.' }
+    $testQuota.sevenDay.resetsAt=1; Paint-Quota $testQuota
+    if ($script:UI.SevenDayValue.Text -notmatch '过期') { throw 'Expired quota snapshot was displayed as current.' }
+    Write-Output ('WPF live data, offline, compact, date range, quota percentage, missing and expired window checks passed. Tokens: '+$originalTokens)
     exit 0
 }
 

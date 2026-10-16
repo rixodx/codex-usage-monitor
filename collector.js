@@ -1,7 +1,8 @@
 'use strict';
-// Read-only adapter for zJay26/codex-usage. No credentials or session files are read.
+// Local token/cost adapter plus optional Codex account quota reader.
 const fs = require('node:fs');
 const path = require('node:path');
+const { QuotaProvider } = require('./quota');
 
 function number(value) {
   const n = Number(value);
@@ -99,6 +100,15 @@ async function main() {
   const stateFile = path.join(root, 'state.json');
   let previous = null;
   let stopping = false;
+  let currentConfig = {};
+  let quotaSnapshot = null;
+  const quota = new QuotaProvider(value => {
+    quotaSnapshot = value;
+    if (previous) {
+      previous = { ...previous, quota: value };
+      try { atomicWrite(stateFile, previous); } catch { /* Reader may briefly hold the file. */ }
+    }
+  });
   const parentIndex = process.argv.indexOf('--parent-pid');
   const parentPid = parentIndex >= 0 ? Number(process.argv[parentIndex + 1]) : null;
   function parentAlive() {
@@ -106,29 +116,38 @@ async function main() {
     try { process.kill(parentPid, 0); return true; }
     catch (error) { return error.code !== 'ESRCH'; }
   }
-  process.on('SIGTERM', () => { stopping = true; });
+  process.on('SIGTERM', () => { stopping = true; quota.close(); });
+  process.on('exit', () => quota.close());
   while (!stopping && parentAlive()) {
     let config = {};
     try {
       if (fs.existsSync(configFile)) config = JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, ''));
-      previous = await collect(config);
+      currentConfig = config;
+      void quota.refresh(config);
+      previous = { ...await collect(config), quota: quotaSnapshot };
       atomicWrite(stateFile, previous);
     } catch (error) {
       const safeMessage = error.name === 'TimeoutError' ? '本地服务响应超时' : error.message;
-      const errorState = { ...(previous || {}), ok: false, error: safeMessage, attemptedAt: new Date().toISOString() };
+      const errorState = { ...(previous || {}), quota: quotaSnapshot, ok: false, error: safeMessage, attemptedAt: new Date().toISOString() };
+      previous = errorState;
       atomicWrite(stateFile, errorState);
       if (process.argv.includes('--once')) { console.error(safeMessage); process.exitCode = 1; }
     }
-    if (process.argv.includes('--once')) break;
+    if (process.argv.includes('--once')) {
+      await quota.refresh(currentConfig);
+      quota.close();
+      break;
+    }
     // Short waits let menu changes and manual refresh take effect promptly.
     const seconds = [5, 15, 30].includes(Number(config.interval)) ? Number(config.interval) : 5;
     for (let i = 0; i < seconds * 4 && !stopping; i++) {
-      if (!parentAlive()) { stopping = true; break; }
+      if (!parentAlive()) { stopping = true; quota.close(); break; }
       const flag = path.join(root, 'refresh.flag');
-      if (fs.existsSync(flag)) { try { fs.unlinkSync(flag); } catch {} break; }
+      if (fs.existsSync(flag)) { try { fs.unlinkSync(flag); } catch {} void quota.refresh(currentConfig, true); break; }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
   }
+  quota.close();
 }
 
 module.exports = { bounds, baseUrl, summarize, collect };

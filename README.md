@@ -3,6 +3,9 @@
 Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJay26/codex-usage) 本地服务**。
 它不修改 Codex 启动参数、系统代理或账号配置。
 
+支持 **5 小时、7 天订阅额度已用百分比、进度条和重置倒计时**；完整和精简模式均可查看。
+额度读取方式参考 [Justin-147/codex-usage-hud](https://github.com/Justin-147/codex-usage-hud)，见 [第三方说明](THIRD_PARTY_NOTICES.md)。
+
 ## 启动
 
 1. 保持 codex-usage 后台服务运行（默认 `http://127.0.0.1:43189`）。
@@ -22,6 +25,8 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 - **×** 完全退出，仅关闭本悬浮窗的采集器，不关闭 codex-usage 服务或 Codex。
 - **完整面板 ↗** 打开原有本地网页。
 - **模型定价（网页）**：在原网页的“模型定价”中编辑价格，悬浮窗随后使用服务的新价格。
+- 额度每约 60 秒通过 Codex CLI 的 `account/rateLimits/read` 更新；“立即刷新”也会触发查询。
+- 查询受网络影响时，回退到本机最近会话的额度快照，并显示其时间。无需为本地快照额外配置代理。
 - 不自动添加开机启动；不请求账号登录；不读取 auth.json。
 
 ## 数据含义
@@ -32,7 +37,18 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 - 显示价格覆盖率；服务报告未计价、分类异常或本地记录不完整时明确标注。未计价部分不会被默认为免费。
 - 服务失联时保留最后成功数值并将状态变为黄色。切换日期范围时会隐藏旧范围数字。
 - 只统计现有服务包含的本机数据；其他设备、未记录的调用不在内。
-- 不显示账号剩余额度百分比；那需要联网，不能仅从 token 精确换算。
+- 额度与上方 token 的日期范围独立：5 小时/7 天是服务端额度窗口，不是“今天”或“近 7 天”的 token 合计。
+- 已用百分比由服务返回，剩余量为 `100 - 已用百分比`。不会从 token 数量推算订阅额度。
+- 服务未返回的窗口显示“未提供”；快照已过重置时间时显示“快照已过期”，不会伪造为 0% 或 100%。
+- “实时查询”“本地快照”“上次查询”显示数据来源；超过 5 分钟的记录标记“旧”。本地记录可能来自账号切换前的会话，应以当前账号在线查询为准。
+- 仅调用只读额度接口，不创建聊天、不运行模型、不消费重置券；不直接读取或展示 auth.json 中的凭据。
+
+## Codex CLI 路径
+
+额度查询需要已登录的 Codex CLI。程序会自动寻找安装路径；找不到时仍可显示本地快照。
+如需手动指定，退出悬浮窗，在 `settings.json` 中设置 `codexExe` 为 `codex.exe` 的完整路径（JSON 路径中的反斜杠需写成 `\\`），再启动。
+不要指定桌面启动器 `app\Codex.exe`，应使用 CLI 或 `app\resources\codex.exe`。
+网络失败不会清空已有 token 或费用统计。
 
 ## 文件
 
@@ -40,6 +56,7 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 - `CodexUsageWidget.exe`：原生启动器，无需 VBS；`Launcher.cs` 为其源代码。
 - `DesktopIdentity.cs`：按 Windows 桌面区分单实例，隔离测试不会占用用户桌面的实例。
 - `collector.js`：只读本地 HTTP 接口，拒绝非本机地址与重定向。
+- `quota.js`：额度查询、时长识别、CLI 生命周期和本地快照回退。
 - `settings.json`：位置、透明度、时间范围和服务地址（首次启动生成）。
 - `state.json`：最新统计快照（自动生成，含本地聚合用量）。
 - `collector-error.log`：采集器错误诊断。
@@ -55,6 +72,7 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 
 ```powershell
 node collector.test.js
+node quota.test.js
 node collector.js --once
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\Widget.ps1 -Validate
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\Widget.ps1 -SelfTest
