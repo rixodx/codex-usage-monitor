@@ -10,7 +10,12 @@ $script:Root = $PSScriptRoot
 $script:SettingsPath = Join-Path $script:Root 'settings.json'
 $script:StatePath = Join-Path $script:Root 'state.json'
 $script:ShowFlag = Join-Path $script:Root 'show.flag'
-Add-Type -Path (Join-Path $script:Root 'DesktopIdentity.cs')
+$identityAssembly=Join-Path $script:Root 'CodexUsage_Monitor.exe'
+if (Test-Path -LiteralPath $identityAssembly) {
+    [void][Reflection.Assembly]::LoadFrom($identityAssembly)
+} else {
+    Add-Type -Path (Join-Path $script:Root 'DesktopIdentity.cs')
+}
 $script:DesktopName=[WidgetDesktopIdentity]::GetName()
 $script:Config = @{ baseUrl='http://127.0.0.1:43189'; period='today'; interval=5; opacity=0.96; topmost=$true; compact=$false; left=$null; top=$null; codexExe=''; updateProxy='' }
 if (Test-Path -LiteralPath $script:SettingsPath) {
@@ -26,7 +31,7 @@ $script:Labels = @{today='今日'; week='近 7 天'; month='本月'; '30days'='�
 
 [xml]$layout = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="Codex Usage 悬浮窗" Width="370" Height="430" MinWidth="370" MinHeight="130" WindowStyle="None"
+ Title="CodexUsage_Monitor" Width="370" Height="430" MinWidth="370" MinHeight="130" WindowStyle="None"
  AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize" ShowInTaskbar="True"
  FontFamily="Segoe UI, Microsoft YaHei UI" Foreground="#F3F6F7" Topmost="True" WindowStartupLocation="Manual">
  <Window.Resources>
@@ -444,7 +449,7 @@ $script:UI.DragArea.Add_MouseLeftButtonDown({ param($sender,$eventArgs)
 })
 $script:Tray=New-Object System.Windows.Forms.NotifyIcon
 $script:Tray.Icon=[Drawing.SystemIcons]::Information
-$script:Tray.Text='Codex Usage 悬浮窗'; $script:Tray.Visible=$true
+$script:Tray.Text='CodexUsage_Monitor'; $script:Tray.Visible=$true
 $script:Tray.Add_DoubleClick({ Show-Widget })
 $trayMenu=New-Object System.Windows.Forms.ContextMenuStrip
 $showItem=$trayMenu.Items.Add('显示悬浮窗'); $showItem.Add_Click({ Show-Widget })
