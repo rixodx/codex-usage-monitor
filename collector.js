@@ -3,6 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { QuotaProvider } = require('./quota');
+const { BackendManager } = require('./backend');
 
 function number(value) {
   const n = Number(value);
@@ -102,6 +103,14 @@ async function main() {
   let stopping = false;
   let currentConfig = {};
   let quotaSnapshot = null;
+  let backendState = null;
+  let bootstrapPromise = null;
+  const backend = new BackendManager(root, value => {
+    backendState = value;
+    const state = { ...(previous || { ok: false }), backend: value, quota: quotaSnapshot };
+    if (previous) previous = state;
+    try { atomicWrite(stateFile,state); } catch {}
+  });
   const quota = new QuotaProvider(value => {
     quotaSnapshot = value;
     if (previous) {
@@ -123,18 +132,20 @@ async function main() {
     try {
       if (fs.existsSync(configFile)) config = JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, ''));
       currentConfig = config;
+      if (!bootstrapPromise && !process.argv.includes('--no-bootstrap')) bootstrapPromise = backend.ensure(config);
       void quota.refresh(config);
-      previous = { ...await collect(config), quota: quotaSnapshot };
+      previous = { ...await collect(config), quota: quotaSnapshot, backend: backendState };
       atomicWrite(stateFile, previous);
     } catch (error) {
       const safeMessage = error.name === 'TimeoutError' ? '本地服务响应超时' : error.message;
-      const errorState = { ...(previous || {}), quota: quotaSnapshot, ok: false, error: safeMessage, attemptedAt: new Date().toISOString() };
+      const errorState = { ...(previous || {}), quota: quotaSnapshot, backend: backendState, ok: false, error: safeMessage, attemptedAt: new Date().toISOString() };
       previous = errorState;
       atomicWrite(stateFile, errorState);
       if (process.argv.includes('--once')) { console.error(safeMessage); process.exitCode = 1; }
     }
     if (process.argv.includes('--once')) {
       await quota.refresh(currentConfig);
+      if (bootstrapPromise) await bootstrapPromise;
       quota.close();
       break;
     }
@@ -144,6 +155,12 @@ async function main() {
       if (!parentAlive()) { stopping = true; quota.close(); break; }
       const flag = path.join(root, 'refresh.flag');
       if (fs.existsSync(flag)) { try { fs.unlinkSync(flag); } catch {} void quota.refresh(currentConfig, true); break; }
+      const updateFlag=path.join(root,'backend-update.flag');
+      if (fs.existsSync(updateFlag)) {
+        try { fs.unlinkSync(updateFlag); } catch {}
+        bootstrapPromise=backend.ensure(currentConfig);
+        break;
+      }
       await new Promise(resolve => setTimeout(resolve, 250));
     }
   }

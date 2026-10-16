@@ -8,12 +8,23 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 
 ## 启动
 
-1. 保持 codex-usage 后台服务运行（默认 `http://127.0.0.1:43189`）。
-2. 双击 **CodexUsageWidget.exe**（不弹终端），或 **Start.cmd**。
+1. 完整解压到可写目录。
+2. 双击 **CodexUsageWidget.exe**（不弹终端），或 **Start.cmd**，自动检查并启动采集服务。
 3. 保持本文件夹可写；需要 Windows PowerShell 5.1、.NET Framework 和 Node.js 18+。
 
 下载后先完整解压，再运行。`Start.vbs` 和 `Start.cmd` 也是可用入口。
-本项目不包含统计服务本身，需要先安装并启动上面链接中的 codex-usage。
+首次启动缺少采集服务时，从上游 GitHub Release 下载最新 Windows 正式版；不需要手动安装 codex-usage。
+
+## 采集服务自动更新
+
+每次启动悬浮窗，都读取正在运行的服务版本，并查询上游最新正式版。已有最新版时复用服务；缺少服务时下载并启动；存在新版时下载、校验，再切换到新版。菜单中的“检查采集服务更新”可手动触发检查。
+
+- 自动选择 Windows x64 / ARM64，忽略预发布版；执行前校验 GitHub 提供的 SHA-256 和程序自身版本。
+- 程序缓存在本文件夹的 `.runtime/<版本>/`。更新时沿用现有统计数据库和模型定价配置，先停止经进程身份核验的旧服务，再备份数据；新版启动失败时尝试恢复旧程序和备份。
+- GitHub 不可达时继续使用正在运行的服务；没有运行的服务时，可启动以前下载并校验过的缓存。界面会说明尚未核实最新版本。
+- 首次下载需要能够连接 GitHub。可在菜单“服务地址”中填写“GitHub 更新代理”，例如 `http://127.0.0.1:你的Clash端口`。只影响更新请求，无需系统代理或 TUN；留空时采用 `HTTPS_PROXY` 环境变量或直接连接。
+- 更新过程显示在窗口底部，错误详情可悬停查看。该功能更新的是 **codex-usage 采集服务**，悬浮窗本身仍需更新项目文件。
+- 不注册开机启动。采集服务独立运行，退出悬浮窗后继续采集；统计数据默认位于 `%LOCALAPPDATA%/codex-usage`。
 
 ## 操作
 
@@ -57,13 +68,14 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 - `DesktopIdentity.cs`：按 Windows 桌面区分单实例，隔离测试不会占用用户桌面的实例。
 - `collector.js`：只读本地 HTTP 接口，拒绝非本机地址与重定向。
 - `quota.js`：额度查询、时长识别、CLI 生命周期和本地快照回退。
+- `backend.js` / `service-control.ps1`：上游版本检查、校验下载、后台启动和失败恢复。
 - `settings.json`：位置、透明度、时间范围和服务地址（首次启动生成）。
 - `state.json`：最新统计快照（自动生成，含本地聚合用量）。
 - `collector-error.log`：采集器错误诊断。
 - `widget-error.log` / `ui-status.json`：窗口启动和显示状态诊断。
 - `launcher.log`：启动时间、桌面名称及窗口进程编号。若 EXE 没有反应，运行 `Diagnose.cmd` 查看可见错误。
 
-退出后删除整个文件夹即可移除。更新脚本时可保留 settings.json。
+更新脚本时可保留 settings.json 和 `.runtime`。移除悬浮窗前先退出；采集服务和统计数据独立保留，正在运行的 EXE 可能需要先结束再删除其缓存目录。
 
 ## 验证
 
@@ -73,7 +85,8 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 ```powershell
 node collector.test.js
 node quota.test.js
-node collector.js --once
+node backend.test.js
+node collector.js --once --no-bootstrap
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\Widget.ps1 -Validate
 powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File .\Widget.ps1 -SelfTest
 ```

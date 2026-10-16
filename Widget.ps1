@@ -12,7 +12,7 @@ $script:StatePath = Join-Path $script:Root 'state.json'
 $script:ShowFlag = Join-Path $script:Root 'show.flag'
 Add-Type -Path (Join-Path $script:Root 'DesktopIdentity.cs')
 $script:DesktopName=[WidgetDesktopIdentity]::GetName()
-$script:Config = @{ baseUrl='http://127.0.0.1:43189'; period='today'; interval=5; opacity=0.96; topmost=$true; compact=$false; left=$null; top=$null; codexExe='' }
+$script:Config = @{ baseUrl='http://127.0.0.1:43189'; period='today'; interval=5; opacity=0.96; topmost=$true; compact=$false; left=$null; top=$null; codexExe=''; updateProxy='' }
 if (Test-Path -LiteralPath $script:SettingsPath) {
     try {
         $saved = Get-Content -LiteralPath $script:SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -240,6 +240,17 @@ function Paint-State {
         $script:UI.StatusLine.Text='等待数据 · 保留上次记录'
         $script:UI.StatusLine.ToolTip= $(if ($s.error) { $s.error } elseif (-not $samePeriod) { '正在切换时间范围' } else { '采集器未更新，请检查本地服务和 Node.js' })
     }
+    if ($s.backend) {
+        if ($s.backend.phase -in @('checking','downloading','installing','starting') -or ($s.ok -and $s.backend.phase -ne 'ready')) {
+            $script:UI.StatusLine.Text=$s.backend.text
+            $script:UI.StatusLine.ToolTip=$s.backend.text+"`n"+$s.backend.error
+        } elseif ($s.ok) {
+            $script:UI.StatusLine.Text='v'+$s.backend.currentVersion+' · '+$script:Labels[$s.period]+' · '+$script:Config.interval+'秒'
+            $script:UI.StatusLine.ToolTip=$s.backend.text+"`n检查时间："+$s.backend.checkedAt+"`n"+$script:UI.StatusLine.ToolTip
+        } else {
+            $script:UI.StatusLine.ToolTip=$script:UI.StatusLine.ToolTip+"`n"+$s.backend.text+"`n"+$s.backend.error
+        }
+    }
 }
 
 function Paint-Quota($quota) {
@@ -295,21 +306,31 @@ function Paint-Quota($quota) {
 
 function Show-ConnectionSettings {
     $dialog=New-Object Windows.Window
-    $dialog.Title='悬浮窗服务地址'; $dialog.Width=430; $dialog.Height=205
+    $dialog.Title='悬浮窗服务地址'; $dialog.Width=430; $dialog.Height=290
     $dialog.ResizeMode='NoResize'; $dialog.WindowStartupLocation='CenterOwner'; $dialog.Owner=$script:Window
     $dialog.Background='#192328'; $dialog.Foreground='#F3F6F7'; $dialog.FontFamily='Microsoft YaHei UI'
     $panel=New-Object Windows.Controls.StackPanel; $panel.Margin='20'; $dialog.Content=$panel
     $label=New-Object Windows.Controls.TextBlock; $label.Text='本地 codex-usage 服务地址'; $label.Margin='0,0,0,10'; [void]$panel.Children.Add($label)
     $field=New-Object Windows.Controls.TextBox; $field.Text=$script:Config.baseUrl; $field.Padding='6'; [void]$panel.Children.Add($field)
     $hint=New-Object Windows.Controls.TextBlock; $hint.Text='只接受本机 HTTP 地址；默认端口 43189'; $hint.Margin='0,10,0,10'; $hint.FontSize=11; [void]$panel.Children.Add($hint)
+    $proxyLabel=New-Object Windows.Controls.TextBlock; $proxyLabel.Text='GitHub 更新代理（可留空）'; $proxyLabel.Margin='0,3,0,6'; [void]$panel.Children.Add($proxyLabel)
+    $proxyField=New-Object Windows.Controls.TextBox; $proxyField.Text=$script:Config.updateProxy; $proxyField.Padding='6'; $proxyField.Margin='0,0,0,10'; [void]$panel.Children.Add($proxyField)
     $save=New-Object Windows.Controls.Button; $save.Content='保存并连接'; $save.Padding='8'; [void]$panel.Children.Add($save)
     $script:ConnectionField=$field; $script:ConnectionDialog=$dialog
+    $script:ProxyField=$proxyField
     $save.Add_Click({
         try {
             $uri=[Uri]$script:ConnectionField.Text.Trim()
             if ($uri.Scheme -ne 'http' -or @('127.0.0.1','localhost','[::1]') -notcontains $uri.Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or $uri.AbsolutePath -ne '/') { throw '请输入本机 HTTP 地址，例如 http://127.0.0.1:43189' }
             $script:Config.baseUrl=$uri.GetLeftPart([UriPartial]::Authority)
+            $proxyText=$script:ProxyField.Text.Trim()
+            if ($proxyText) {
+                $proxyUri=[Uri]$proxyText
+                if ($proxyUri.Scheme -ne 'http' -or $proxyUri.UserInfo -or $proxyUri.Query -or $proxyUri.Fragment -or $proxyUri.AbsolutePath -ne '/') { throw '更新代理请输入 http://主机:端口，不要填写账号密码。' }
+            }
+            $script:Config.updateProxy=$proxyText
             Save-Settings; Request-Refresh; $script:ConnectionDialog.Close()
+            [IO.File]::WriteAllText((Join-Path $script:Root 'backend-update.flag'),'')
         } catch { [Windows.MessageBox]::Show($_.Exception.Message,'地址无效') | Out-Null }
     })
     [void]$dialog.ShowDialog()
@@ -332,6 +353,7 @@ function Add-MenuItem($parent,$header,$action,$value,$checked=$false) {
                 'web' { Open-Dashboard }
                 'pricing' { Open-Dashboard; [void][Windows.MessageBox]::Show('在完整面板中点击「模型定价」即可编辑。悬浮窗会自动使用更新后的价格。','模型定价', 'OK', 'Information') }
                 'connection' { Show-ConnectionSettings }
+                'backendUpdate' { [IO.File]::WriteAllText((Join-Path $script:Root 'backend-update.flag'),'') }
                 'quit' { $script:Window.Close() }
             }
             $eventArgs.Handled=$true
@@ -355,6 +377,7 @@ function Show-Menu {
     [void](Add-MenuItem $menu '完整网页面板' 'web' '')
     [void](Add-MenuItem $menu '模型定价（网页）' 'pricing' '')
     [void](Add-MenuItem $menu '本地服务地址…' 'connection' '')
+    [void](Add-MenuItem $menu '检查采集服务更新' 'backendUpdate' '')
     [void](Add-MenuItem $menu '退出' 'quit' '')
     $menu.PlacementTarget=$script:UI.MenuButton; $menu.IsOpen=$true
 }

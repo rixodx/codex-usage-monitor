@@ -11,3 +11,5 @@ show.*.flag
 launcher.log
 preview*.png
 *.zip
+.runtime/
+backend-update.flag
