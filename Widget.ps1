@@ -359,6 +359,7 @@ function Add-MenuItem($parent,$header,$action,$value,$checked=$false) {
                 'web' { Open-Dashboard }
                 'pricing' { Open-Dashboard; [void][Windows.MessageBox]::Show('在完整面板中点击「模型定价」即可编辑。悬浮窗会自动使用更新后的价格。','模型定价', 'OK', 'Information') }
                 'connection' { Show-ConnectionSettings }
+                'displaySettings' { Show-DisplaySettings }
                 'backendUpdate' { [IO.File]::WriteAllText((Join-Path $script:Root 'backend-update.flag'),'') }
                 'quit' { $script:Window.Close() }
             }
@@ -368,16 +369,15 @@ function Add-MenuItem($parent,$header,$action,$value,$checked=$false) {
     [void]$parent.Items.Add($item)
     return $item
 }
-function Show-Menu {
+function New-WidgetMenu {
     $menu=New-Object Windows.Controls.ContextMenu
-    $periodMenu=Add-MenuItem $menu '时间范围' '' ''
-    foreach ($p in @('today','week','month','30days')) { [void](Add-MenuItem $periodMenu $script:Labels[$p] 'period' $p ($script:Config.period -eq $p)) }
+    # Use a single popup: left-opening cascading menus can lose their mouse
+    # capture beside this transparent, topmost window on multi-monitor setups.
+    foreach ($p in @('today','week','month','30days')) { [void](Add-MenuItem $menu $script:Labels[$p] 'period' $p ($script:Config.period -eq $p)) }
+    [void]$menu.Items.Add((New-Object Windows.Controls.Separator))
     [void](Add-MenuItem $menu '精简模式' 'compact' '' ([bool]$script:Config.compact))
     [void](Add-MenuItem $menu '始终置顶' 'topmost' '' ([bool]$script:Config.topmost))
-    $opacityMenu=Add-MenuItem $menu '不透明度' '' ''
-    foreach ($op in @(1.0,0.96,0.85,0.70)) { [void](Add-MenuItem $opacityMenu (($op*100).ToString('0')+'%') 'opacity' $op ($script:Config.opacity -eq $op)) }
-    $intervalMenu=Add-MenuItem $menu '自动刷新' '' ''
-    foreach ($seconds in @(5,15,30)) { [void](Add-MenuItem $intervalMenu ($seconds.ToString()+' 秒') 'interval' $seconds ($script:Config.interval -eq $seconds)) }
+    [void](Add-MenuItem $menu '透明度与刷新设置…' 'displaySettings' '')
     [void]$menu.Items.Add((New-Object Windows.Controls.Separator))
     [void](Add-MenuItem $menu '立即刷新' 'refresh' '')
     [void](Add-MenuItem $menu '完整网页面板' 'web' '')
@@ -385,7 +385,69 @@ function Show-Menu {
     [void](Add-MenuItem $menu '本地服务地址…' 'connection' '')
     [void](Add-MenuItem $menu '检查采集服务更新' 'backendUpdate' '')
     [void](Add-MenuItem $menu '退出' 'quit' '')
-    $menu.PlacementTarget=$script:UI.MenuButton; $menu.IsOpen=$true
+    return $menu
+}
+function Show-Menu {
+    if ($script:OpenMenu -and $script:OpenMenu.IsOpen) { $script:OpenMenu.IsOpen=$false; return }
+    $menu=New-WidgetMenu
+    $menu.PlacementTarget=$script:UI.MenuButton
+    $menu.Placement=[Windows.Controls.Primitives.PlacementMode]::Bottom
+    $menu.MaxHeight=[Math]::Max(160,[System.Windows.SystemParameters]::WorkArea.Height-30)
+    $script:DragStart=$null; $script:OpenMenu=$menu; $menu.IsOpen=$true
+}
+
+function Show-DisplaySettings {
+    $dialog=New-Object Windows.Window
+    $dialog.Title='透明度与刷新'; $dialog.Width=330; $dialog.Height=260
+    $dialog.ResizeMode='NoResize'; $dialog.WindowStartupLocation='CenterOwner'; $dialog.Owner=$script:Window
+    $dialog.Background='#192328'; $dialog.Foreground='#F3F6F7'; $dialog.FontFamily='Microsoft YaHei UI'
+    $panel=New-Object Windows.Controls.StackPanel; $panel.Margin='20'; $dialog.Content=$panel
+    foreach ($caption in @('不透明度','自动刷新间隔')) {
+        $label=New-Object Windows.Controls.TextBlock; $label.Text=$caption; $label.Margin='0,0,0,6'; [void]$panel.Children.Add($label)
+        $field=New-Object Windows.Controls.ComboBox; $field.Margin='0,0,0,12'; $field.Padding='5'
+        if ($caption -eq '不透明度') {
+            foreach ($op in @(1.0,0.96,0.85,0.70)) {
+                $option=New-Object Windows.Controls.ComboBoxItem; $option.Content=($op*100).ToString('0')+'%'; $option.Tag=$op
+                [void]$field.Items.Add($option); if ($script:Config.opacity -eq $op) { $field.SelectedItem=$option }
+            }
+            if ($field.SelectedIndex -lt 0) { $field.SelectedIndex=0 }
+            $script:OpacityField=$field
+        } else {
+            foreach ($seconds in @(5,15,30)) {
+                $option=New-Object Windows.Controls.ComboBoxItem; $option.Content=$seconds.ToString()+' 秒'; $option.Tag=$seconds
+                [void]$field.Items.Add($option); if ($script:Config.interval -eq $seconds) { $field.SelectedItem=$option }
+            }
+            $script:IntervalField=$field
+        }
+        [void]$panel.Children.Add($field)
+    }
+    $save=New-Object Windows.Controls.Button; $save.Content='保存'; $save.Padding='8'; [void]$panel.Children.Add($save)
+    $script:DisplayDialog=$dialog
+    $save.Add_Click({
+        $script:Config.opacity=[double]$script:OpacityField.SelectedItem.Tag
+        $script:Config.interval=[int]$script:IntervalField.SelectedItem.Tag
+        $script:Window.Opacity=$script:Config.opacity
+        Save-Settings; Request-Refresh; $script:DisplayDialog.Close()
+    })
+    [void]$dialog.ShowDialog()
+}
+
+function Test-WindowDragSource($source) {
+    while ($null -ne $source) {
+        if ($source -is [Windows.Controls.Primitives.ButtonBase] -or
+            $source -is [Windows.Controls.MenuItem] -or $source -is [Windows.Controls.ContextMenu] -or
+            $source -is [Windows.Controls.Primitives.TextBoxBase] -or
+            $source -is [Windows.Controls.Primitives.Selector] -or
+            $source -is [Windows.Controls.Primitives.ScrollBar]) { return $false }
+        if ($source -eq $script:Window) { return $true }
+        $parent=$null
+        if ($source -is [Windows.Media.Visual] -or $source -is [Windows.Media.Media3D.Visual3D]) {
+            $parent=[Windows.Media.VisualTreeHelper]::GetParent($source)
+        }
+        if ($null -eq $parent) { $parent=[Windows.LogicalTreeHelper]::GetParent($source) }
+        $source=$parent
+    }
+    return $false
 }
 
 if ($SelfTest) {
@@ -410,6 +472,15 @@ if ($SelfTest) {
         try { $encoder.Save($stream) } finally { $stream.Dispose() }
     }
     Export-Preview 'preview.png'
+    $testMenu=New-WidgetMenu
+    $timeItems=@($testMenu.Items | Where-Object { $_ -is [Windows.Controls.MenuItem] -and $_.Tag.action -eq 'period' })
+    if ($timeItems.Count -ne 4 -or @($testMenu.Items | Where-Object { $_ -is [Windows.Controls.MenuItem] -and $_.HasItems }).Count -ne 0) { throw 'Menu must expose all time ranges without left/right cascading popups.' }
+    if (-not (Test-WindowDragSource $script:UI.TokenValue) -or -not (Test-WindowDragSource $script:UI.CoverageLine)) { throw 'Body and footer must allow window dragging.' }
+    foreach ($buttonName in @('MenuButton','HideButton','CloseButton','DetailButton')) {
+        $button=$script:UI[$buttonName]; [void]$button.ApplyTemplate()
+        $buttonSurface=$button.Template.FindName('ButtonBorder',$button)
+        if ((Test-WindowDragSource $button) -or (Test-WindowDragSource $buttonSurface)) { throw 'Interactive buttons must not start window dragging.' }
+    }
     $originalTokens=$script:UI.TokenValue.Text
     $script:LastState.ok=$false
     $script:LastState | Add-Member -NotePropertyName error -NotePropertyValue 'Test: service unavailable' -Force
@@ -429,24 +500,34 @@ if ($SelfTest) {
     if ($script:UI.FiveHourValue.Text -notmatch '未提供') { throw 'Missing quota appeared as zero usage.' }
     $testQuota.sevenDay.resetsAt=1; Paint-Quota $testQuota
     if ($script:UI.SevenDayValue.Text -notmatch '过期') { throw 'Expired quota snapshot was displayed as current.' }
-    Write-Output ('WPF live data, offline, compact, date range, quota percentage, missing and expired window checks passed. Tokens: '+$originalTokens)
+    Write-Output ('WPF data, quota, flat menu, body dragging and button exclusion checks passed. Tokens: '+$originalTokens)
     exit 0
 }
 
 $script:UI.MenuButton.Add_Click({ Show-Menu })
-$script:Window.Add_MouseRightButtonUp({ Show-Menu })
+$script:Window.Add_MouseRightButtonUp({ param($sender,$eventArgs) Show-Menu; $eventArgs.Handled=$true })
 $script:UI.DetailButton.Add_Click({ Open-Dashboard })
 $script:UI.CloseButton.Add_Click({ $script:Window.Close() })
 $script:UI.HideButton.Add_Click({ $script:Window.Hide() })
-$script:UI.DragArea.Add_MouseLeftButtonDown({ param($sender,$eventArgs)
-    $source=$eventArgs.OriginalSource
-    while ($null -ne $source) {
-        if ($source -is [Windows.Controls.Button]) { return }
-        $source=[Windows.Media.VisualTreeHelper]::GetParent($source)
-    }
-    if ($eventArgs.ClickCount -eq 2) { $script:Config.compact=-not $script:Config.compact; Apply-View; Save-Settings }
-    else { try { $script:Window.DragMove(); Save-Settings } catch { } }
+$script:DragStart=$null
+$script:Window.Add_PreviewMouseLeftButtonDown({ param($sender,$eventArgs)
+    $script:DragStart=$null
+    if (($script:OpenMenu -and $script:OpenMenu.IsOpen) -or -not (Test-WindowDragSource $eventArgs.OriginalSource)) { return }
+    if ($eventArgs.ClickCount -eq 2 -and $script:UI.DragArea.IsMouseOver) {
+        $script:Config.compact=-not $script:Config.compact; Apply-View; Save-Settings; $eventArgs.Handled=$true
+    } else { $script:DragStart=$eventArgs.GetPosition($script:Window) }
 })
+$script:Window.Add_PreviewMouseMove({ param($sender,$eventArgs)
+    if ($null -eq $script:DragStart) { return }
+    if ([Windows.Input.Mouse]::LeftButton -ne [Windows.Input.MouseButtonState]::Pressed) { $script:DragStart=$null; return }
+    $position=$eventArgs.GetPosition($script:Window)
+    if ([Math]::Abs($position.X-$script:DragStart.X) -lt [System.Windows.SystemParameters]::MinimumHorizontalDragDistance -and
+        [Math]::Abs($position.Y-$script:DragStart.Y) -lt [System.Windows.SystemParameters]::MinimumVerticalDragDistance) { return }
+    $script:DragStart=$null
+    try { $script:Window.DragMove(); Save-Settings; $eventArgs.Handled=$true } catch {}
+})
+$script:Window.Add_PreviewMouseLeftButtonUp({ $script:DragStart=$null })
+$script:Window.Add_Deactivated({ $script:DragStart=$null })
 $script:Tray=New-Object System.Windows.Forms.NotifyIcon
 $script:Tray.Icon=[Drawing.SystemIcons]::Information
 $script:Tray.Text='CodexUsage_Monitor'; $script:Tray.Visible=$true
