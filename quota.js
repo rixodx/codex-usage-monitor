@@ -152,7 +152,7 @@ class AppServer {
           else request.resolve(message.result);
         } catch {}
       });
-      await this.send('initialize', { clientInfo: { name: 'codex_usage_widget', title: 'Codex Usage Widget', version: '0.2.0' } });
+      await this.send('initialize', { clientInfo: { name: 'codex-usage-monitor', title: 'codex-usage-monitor', version: '0.2.0' } });
       child.stdin.write(JSON.stringify({ method: 'initialized', params: {} }) + '\n');
     })();
     try { await this.starting; } catch (error) { this.close(); throw error; }

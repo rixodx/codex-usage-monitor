@@ -3,14 +3,14 @@ $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName PresentationFramework, PresentationCore, WindowsBase, System.Windows.Forms, System.Drawing, System.Net.Http
 trap {
     try { [IO.File]::WriteAllText((Join-Path $PSScriptRoot 'widget-error.log'), ($_ | Out-String), (New-Object Text.UTF8Encoding($false))) } catch { }
-    if (-not $Validate -and -not $SelfTest) { [void][Windows.MessageBox]::Show('悬浮窗启动遇到错误，请查看同目录 widget-error.log。','Codex Usage') }
+    if (-not $Validate -and -not $SelfTest) { [void][Windows.MessageBox]::Show('悬浮窗启动遇到错误，请查看同目录 widget-error.log。','codex-usage-monitor') }
     exit 1
 }
 $script:Root = $PSScriptRoot
 $script:SettingsPath = Join-Path $script:Root 'settings.json'
 $script:StatePath = Join-Path $script:Root 'state.json'
 $script:ShowFlag = Join-Path $script:Root 'show.flag'
-$identityAssembly=Join-Path $script:Root 'CodexUsage_Monitor.exe'
+$identityAssembly=Join-Path $script:Root 'codex-usage-monitor.exe'
 if (Test-Path -LiteralPath $identityAssembly) {
     [void][Reflection.Assembly]::LoadFrom($identityAssembly)
 } else {
@@ -31,7 +31,7 @@ $script:Labels = @{today='今日'; week='近 7 天'; month='本月'; '30days'='�
 
 [xml]$layout = @'
 <Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
- Title="CodexUsage_Monitor" Width="370" Height="430" MinWidth="370" MinHeight="130" WindowStyle="None"
+ Title="codex-usage-monitor" Width="370" Height="430" MinWidth="370" MinHeight="130" WindowStyle="None"
  AllowsTransparency="True" Background="Transparent" ResizeMode="NoResize" ShowInTaskbar="True"
  FontFamily="Segoe UI, Microsoft YaHei UI" Foreground="#F3F6F7" Topmost="True" WindowStartupLocation="Manual">
  <Window.Resources>
@@ -530,7 +530,7 @@ $script:Window.Add_PreviewMouseLeftButtonUp({ $script:DragStart=$null })
 $script:Window.Add_Deactivated({ $script:DragStart=$null })
 $script:Tray=New-Object System.Windows.Forms.NotifyIcon
 $script:Tray.Icon=[Drawing.SystemIcons]::Information
-$script:Tray.Text='CodexUsage_Monitor'; $script:Tray.Visible=$true
+$script:Tray.Text='codex-usage-monitor'; $script:Tray.Visible=$true
 $script:Tray.Add_DoubleClick({ Show-Widget })
 $trayMenu=New-Object System.Windows.Forms.ContextMenuStrip
 $showItem=$trayMenu.Items.Add('显示悬浮窗'); $showItem.Add_Click({ Show-Widget })
@@ -552,7 +552,7 @@ try {
     $script:Worker=[Diagnostics.Process]::Start($workerInfo)
 } catch {
     [IO.File]::WriteAllText((Join-Path $script:Root 'widget-error.log'), ($_ | Out-String), (New-Object Text.UTF8Encoding($false)))
-    [void][Windows.MessageBox]::Show('启动采集器失败，请安装 Node.js 18 或以上版本。'+"`n"+$_.Exception.Message,'Codex Usage')
+    [void][Windows.MessageBox]::Show('启动采集器失败，请安装 Node.js 18 或以上版本。'+"`n"+$_.Exception.Message,'codex-usage-monitor')
     $script:Tray.Dispose(); $script:Mutex.ReleaseMutex(); $script:Mutex.Dispose(); exit 1
 }
 $script:Timer=New-Object Windows.Threading.DispatcherTimer

@@ -1,4 +1,4 @@
-# CodexUsage_Monitor
+# codex-usage-monitor
 
 Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJay26/codex-usage) 本地服务**。
 它不修改 Codex 启动参数、系统代理或账号配置。
@@ -8,10 +8,10 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 
 ## 启动
 
-最小运行包仅包含 EXE、窗口与采集脚本、第三方说明和简要使用说明；不包含源码、测试、个人设置、统计记录或已下载的服务缓存。完整解压后运行 `CodexUsage_Monitor.exe`。仍需 Windows 自带的 PowerShell / .NET Framework，以及已安装的 Node.js 18+。
+最小运行包仅包含 EXE、窗口与采集脚本、第三方说明和简要使用说明；不包含源码、测试、个人设置、统计记录或已下载的服务缓存。完整解压后运行 `codex-usage-monitor.exe`。仍需 Windows 自带的 PowerShell / .NET Framework，以及已安装的 Node.js 18+。
 
 1. 完整解压到可写目录。
-2. 双击 **CodexUsage_Monitor.exe**（不弹终端），或 **Start.cmd**，自动检查并启动采集服务。
+2. 双击 **codex-usage-monitor.exe**（不弹终端），或 **Start.cmd**，自动检查并启动采集服务。
 3. 保持本文件夹可写；需要 Windows PowerShell 5.1、.NET Framework 和 Node.js 18+。
 
 下载后先完整解压，再运行。`Start.vbs` 和 `Start.cmd` 也是可用入口。
@@ -69,7 +69,7 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 ## 文件
 
 - `Widget.ps1`：Windows WPF 窗口。
-- `CodexUsage_Monitor.exe`：原生启动器，无需 VBS；`Launcher.cs` 为其源代码。
+- `codex-usage-monitor.exe`：原生启动器，无需 VBS；`Launcher.cs` 为其源代码。
 - `DesktopIdentity.cs`：按 Windows 桌面区分单实例，已编译进 EXE；运行包无需附带该源码。
 - `collector.js`：只读本地 HTTP 接口，拒绝非本机地址与重定向。
 - `quota.js`：额度查询、时长识别、CLI 生命周期和本地快照回退。
@@ -85,7 +85,7 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 ## 验证
 
 如需从源码重建启动器，双击 `Build.cmd`。它使用 Windows 自带 .NET Framework 的 C# 编译器，不需要额外的 .NET SDK。
-编译后运行 `CodexUsage_Monitor.exe`、`Start.cmd` 或 `Start.vbs`。
+编译后运行 `codex-usage-monitor.exe`、`Start.cmd` 或 `Start.vbs`。
 
 ```powershell
 node collector.test.js

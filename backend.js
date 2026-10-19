@@ -71,7 +71,7 @@ function remoteBuffer(raw, proxy = '', maxBytes = 100 * 1024 * 1024, onProgress 
       if (socket) agent.createConnection = () => socket;
       active = https.request({ protocol: 'https:', hostname: url.hostname, port: url.port || 443,
         path: url.pathname + url.search, method: 'GET', agent,
-        headers: { 'User-Agent': 'CodexUsage_Monitor/0.3', Accept: url.hostname === 'api.github.com' ? 'application/vnd.github+json' : '*/*' } }, response => {
+        headers: { 'User-Agent': 'codex-usage-monitor/0.3', Accept: url.hostname === 'api.github.com' ? 'application/vnd.github+json' : '*/*' } }, response => {
         if ([301, 302, 303, 307, 308].includes(response.statusCode)) {
           response.resume();
           let next;

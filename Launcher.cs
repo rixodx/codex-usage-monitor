@@ -15,7 +15,7 @@ internal static class Launcher
             File.AppendAllText(Path.Combine(folder, "launcher.log"),
                 DateTime.Now.ToString("s") + " desktop=" + WidgetDesktopIdentity.GetName() + Environment.NewLine);
             if (!File.Exists(script))
-                throw new FileNotFoundException("请先解压整个文件夹，再运行 CodexUsage_Monitor.exe。", script);
+                throw new FileNotFoundException("请先解压整个文件夹，再运行 codex-usage-monitor.exe。", script);
             string powershell = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System),
                 @"WindowsPowerShell\v1.0\powershell.exe");
             ProcessStartInfo start = new ProcessStartInfo();
@@ -29,7 +29,7 @@ internal static class Launcher
         }
         catch (Exception ex)
         {
-            MessageBox.Show(ex.Message, "Codex Usage 启动失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            MessageBox.Show(ex.Message, "codex-usage-monitor 启动失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
         }
     }
 }

@@ -1,6 +1,6 @@
-# CodexUsage_Monitor
+# codex-usage-monitor
 
-Windows 桌面用量悬浮窗。完整解压到可写目录，双击 CodexUsage_Monitor.exe。
+Windows 桌面用量悬浮窗。完整解压到可写目录，双击 codex-usage-monitor.exe。
 
 运行环境：Windows PowerShell 5.1、.NET Framework（Windows 通常自带），以及已安装的 Node.js 18 或更高版本。此最小包不包含 Node.js。
 
