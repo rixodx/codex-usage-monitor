@@ -186,9 +186,6 @@ function Open-Dashboard {
 function Show-Widget {
     $script:Window.WindowState='Normal'
     $script:Window.Show()
-    # Bring a hidden or misplaced widget back to the primary work area.
-    $script:Window.Left=[Windows.SystemParameters]::WorkArea.Right-$script:Window.Width-20
-    $script:Window.Top=[Windows.SystemParameters]::WorkArea.Top+70
     $script:Window.Activate() | Out-Null
 }
 function Apply-View {
