@@ -2,10 +2,20 @@
 $tokens=$null; $parseErrors=$null
 $ast=[Management.Automation.Language.Parser]::ParseFile((Join-Path $PSScriptRoot 'Widget.ps1'),[ref]$tokens,[ref]$parseErrors)
 if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
-foreach ($name in @('Resolve-CollectionHome','Start-CollectionCommand')) {
+foreach ($name in @('Resolve-CollectionHome','Start-CollectionCommand','Add-CollectionRow')) {
     $function=$ast.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
     Invoke-Expression $function.Extent.Text
 }
+Add-Type -AssemblyName PresentationFramework
+$script:CollectionList=New-Object Windows.Controls.ListBox
+Add-CollectionRow 'C:\first' $true
+Add-CollectionRow 'C:\second' $true
+Add-CollectionRow 'c:\SECOND' $false
+if ($script:CollectionList.Items.Count -ne 2 -or $script:CollectionList.Items[1].Content.IsChecked) { throw 'Rows must deduplicate case-insensitively and preserve unchecked state.' }
+$script:CollectionList.Items[0].Content.IsChecked=$false
+if (@($script:CollectionList.Items | Where-Object { $_.Content.IsChecked }).Count -ne 0) { throw 'All directory checkboxes must be deselectable.' }
+$script:CollectionList.Items.RemoveAt(1)
+if ($script:CollectionList.Items.Count -ne 1 -or $script:CollectionList.Items[0].Tag -ne 'C:\first') { throw 'Removing one row must preserve other directories.' }
 $testRoot=Join-Path ([IO.Path]::GetTempPath()) ('codex-home-test-'+[Guid]::NewGuid().ToString('N'))
 $testHome=Join-Path $testRoot 'space home 中文'
 $sessions=Join-Path $testHome 'sessions'

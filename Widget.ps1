@@ -17,7 +17,7 @@ if (Test-Path -LiteralPath $identityAssembly) {
     Add-Type -Path (Join-Path $script:Root 'DesktopIdentity.cs')
 }
 $script:DesktopName=[WidgetDesktopIdentity]::GetName()
-$script:Config = @{ baseUrl='http://127.0.0.1:43189'; period='today'; interval=5; opacity=0.96; topmost=$true; compact=$false; left=$null; top=$null; codexExe=''; updateProxy='' }
+$script:Config = @{ baseUrl='http://127.0.0.1:43189'; period='today'; interval=5; opacity=0.96; topmost=$true; compact=$false; left=$null; top=$null; codexExe=''; updateProxy=''; collectionDirectories=$null; collectionHomes=$null }
 if (Test-Path -LiteralPath $script:SettingsPath) {
     try {
         $saved = Get-Content -LiteralPath $script:SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -357,10 +357,23 @@ function Start-CollectionCommand([string]$arguments) {
     $info.StandardOutputEncoding=New-Object Text.UTF8Encoding($false)
     $info.StandardErrorEncoding=New-Object Text.UTF8Encoding($false)
     $info.EnvironmentVariables['CODEX_USAGE_HOME']=$script:CollectionServiceHome
+    if ($script:CollectionPrimary) { $info.EnvironmentVariables['CODEX_HOME']=$script:CollectionPrimary }
     $script:CollectionProcess=[Diagnostics.Process]::Start($info)
     $script:CollectionOutput=$script:CollectionProcess.StandardOutput.ReadToEndAsync()
     $script:CollectionError=$script:CollectionProcess.StandardError.ReadToEndAsync()
     $script:CollectionStarted=[DateTime]::UtcNow
+}
+function Add-CollectionRow([string]$path,[bool]$enabled) {
+    foreach ($row in $script:CollectionList.Items) {
+        if ([string]::Equals([string]$row.Tag,$path,[StringComparison]::OrdinalIgnoreCase)) { $row.Content.IsChecked=$enabled; $script:CollectionList.SelectedItem=$row; return }
+    }
+    $row=New-Object Windows.Controls.ListBoxItem; $row.Tag=$path
+    $check=New-Object Windows.Controls.CheckBox; $check.Content=$path; $check.IsChecked=$enabled; $check.Margin='5,7,5,7'
+    $row.Content=$check; [void]$script:CollectionList.Items.Add($row)
+    $check.Add_PreviewMouseLeftButtonDown({ param($sender,$eventArgs)
+        $script:CollectionList.SelectedItem=[Windows.Controls.ItemsControl]::ContainerFromElement($script:CollectionList,$sender)
+    })
+    $script:CollectionList.SelectedItem=$row
 }
 function Show-CollectionSettings {
     try {
@@ -381,20 +394,37 @@ function Show-CollectionSettings {
         if ($actualHash -ne $asset.digest.Substring(7)) { throw '采集服务缓存校验失败，请先检查采集服务更新。' }
     } catch { [void][Windows.MessageBox]::Show('无法读取采集目录，请确认本地采集服务已启动。'+"`n"+$_.Exception.Message,'采集目录'); return }
     $dialog=New-Object Windows.Window
-    $dialog.Title='采集目录'; $dialog.Width=590; $dialog.Height=520; $dialog.ResizeMode='NoResize'
+    $dialog.Title='采集目录'; $dialog.Width=680; $dialog.Height=550; $dialog.ResizeMode='NoResize'
     $dialog.WindowStartupLocation='CenterOwner'; $dialog.Owner=$script:Window
     $dialog.Background='#192328'; $dialog.Foreground='#F3F6F7'; $dialog.FontFamily='Microsoft YaHei UI'
     $panel=New-Object Windows.Controls.StackPanel; $panel.Margin='20'; $dialog.Content=$panel
-    $label=New-Object Windows.Controls.TextBlock; $label.Text='当前采集目录'; $label.Margin='0,0,0,8'; [void]$panel.Children.Add($label)
-    $list=New-Object Windows.Controls.TextBox; $list.IsReadOnly=$true; $list.AcceptsReturn=$true; $list.Height=105
-    $list.VerticalScrollBarVisibility='Auto'; $list.HorizontalScrollBarVisibility='Auto'; $list.Text=@($status.configured_homes) -join "`r`n"; [void]$panel.Children.Add($list)
-    $hint=New-Object Windows.Controls.TextBlock; $hint.Text='选择包含 sessions 或 archived_sessions 的 Codex Home 目录。添加后合并统计，不移动或删除原始记录。'; $hint.TextWrapping='Wrap'; $hint.Margin='0,14,0,8'; [void]$panel.Children.Add($hint)
+    $hint=New-Object Windows.Controls.TextBlock
+    $hint.Text='勾选参与采集的目录；可单选、多选或全部取消。删除只移出列表，不删除原始日志或历史统计。取消勾选只停止后续采集。修改后点击“保存并应用”。'
+    $hint.TextWrapping='Wrap'; $hint.Margin='0,0,0,10'; [void]$panel.Children.Add($hint)
+    $list=New-Object Windows.Controls.ListBox; $list.Height=165; $list.HorizontalContentAlignment='Stretch'
+    $list.SetValue([Windows.Controls.ScrollViewer]::HorizontalScrollBarVisibilityProperty,[Windows.Controls.ScrollBarVisibility]::Auto)
+    [void]$panel.Children.Add($list)
+    $script:CollectionList=$list
+    $known=@($status.configured_homes | Where-Object { $_ -notlike '*\.codex-usage-paused-home' })
+    $enabled=$known
+    if ($null -ne $script:Config.collectionDirectories) { $known=@($script:Config.collectionDirectories) }
+    if ($null -ne $script:Config.collectionHomes) { $enabled=@($script:Config.collectionHomes) }
+    foreach ($path in $known) { Add-CollectionRow $path ($enabled -contains $path) }
+    $remove=New-Object Windows.Controls.Button; $remove.Content='删除所选目录'; $remove.Padding='6'; $remove.Margin='0,8,0,8'; [void]$panel.Children.Add($remove)
+    $remove.Add_Click({
+        if ($null -eq $script:CollectionList.SelectedItem) { $script:CollectionMessage.Text='先点击需要删除的目录行，再点击删除。'; return }
+        $script:CollectionList.Items.Remove($script:CollectionList.SelectedItem)
+        $script:CollectionMessage.Text='已从列表移除；点击“保存并应用”后生效，原始日志和历史统计保留。'
+    })
     $field=New-Object Windows.Controls.TextBox; $field.Padding='6'; $field.Margin='0,0,0,8'; [void]$panel.Children.Add($field)
-    $browse=New-Object Windows.Controls.Button; $browse.Content='选择文件夹…'; $browse.Padding='6'; [void]$panel.Children.Add($browse)
+    $buttons=New-Object Windows.Controls.StackPanel; $buttons.Orientation='Horizontal'; [void]$panel.Children.Add($buttons)
+    $browse=New-Object Windows.Controls.Button; $browse.Content='选择文件夹…'; $browse.Padding='8'; [void]$buttons.Children.Add($browse)
+    $add=New-Object Windows.Controls.Button; $add.Content='添加到列表'; $add.Padding='8'; $add.Margin='10,0,0,0'; [void]$buttons.Children.Add($add)
     $message=New-Object Windows.Controls.TextBox; $message.IsReadOnly=$true; $message.TextWrapping='Wrap'; $message.Height=65; $message.VerticalScrollBarVisibility='Auto'; $message.Margin='0,10,0,10'; [void]$panel.Children.Add($message)
-    $add=New-Object Windows.Controls.Button; $add.Content='添加并扫描'; $add.Padding='8'; [void]$panel.Children.Add($add)
-    $script:CollectionField=$field; $script:CollectionList=$list; $script:CollectionMessage=$message
-    $script:CollectionAdd=$add; $script:CollectionBrowse=$browse; $script:CollectionDialog=$dialog
+    $save=New-Object Windows.Controls.Button; $save.Content='保存并应用'; $save.Padding='8'; [void]$panel.Children.Add($save)
+    $script:CollectionField=$field; $script:CollectionMessage=$message
+    $script:CollectionAdd=$add; $script:CollectionBrowse=$browse; $script:CollectionDialog=$dialog; $script:CollectionSave=$save
+    $script:CollectionControls=@($field,$add,$browse,$remove,$save,$list)
     $script:CollectionPhase=''; $script:CollectionProcess=$null
     $browse.Add_Click({
         $picker=New-Object System.Windows.Forms.FolderBrowserDialog
@@ -406,18 +436,46 @@ function Show-CollectionSettings {
     })
     $add.Add_Click({
         try {
-            $script:CollectionSelected=Resolve-CollectionHome $script:CollectionField.Text
-            Start-CollectionCommand ('config add-home "'+$script:CollectionSelected+'"')
-            $script:CollectionPhase='adding'; $script:CollectionAdd.IsEnabled=$false; $script:CollectionBrowse.IsEnabled=$false; $script:CollectionField.IsEnabled=$false
-            $script:CollectionMessage.Text='正在添加目录…'; $script:CollectionTimer.Start()
+            $path=Resolve-CollectionHome $script:CollectionField.Text
+            Add-CollectionRow $path $true
+            $script:CollectionMessage.Text='已加入列表，点击“保存并应用”后生效。'
+        } catch { $script:CollectionMessage.Text=$_.Exception.Message }
+    })
+    $save.Add_Click({
+        try {
+            $all=@($script:CollectionList.Items | ForEach-Object { [string]$_.Tag })
+            $selected=@($script:CollectionList.Items | Where-Object { $_.Content.IsChecked } | ForEach-Object { Resolve-CollectionHome ([string]$_.Tag) })
+            $script:Config.collectionDirectories=$all; $script:Config.collectionHomes=$selected
+            Save-Settings
+            [IO.File]::WriteAllText((Join-Path $script:Root 'backend-update.flag'),'')
+            Request-Refresh
+            $script:CollectionPhase='applying'; $script:CollectionStarted=[DateTime]::UtcNow
+            foreach ($control in $script:CollectionControls) { $control.IsEnabled=$false }
+            $script:CollectionMessage.Text='正在应用目录选择…'; $script:CollectionTimer.Start()
         } catch { $script:CollectionMessage.Text=$_.Exception.Message }
     })
     $script:CollectionTimer=New-Object Windows.Threading.DispatcherTimer
-    $script:CollectionTimer.Interval=[TimeSpan]::FromMilliseconds(250)
+    $script:CollectionTimer.Interval=[TimeSpan]::FromMilliseconds(500)
     $script:CollectionTimer.Add_Tick({
         try {
+            if ($script:CollectionPhase -eq 'applying') {
+                if (([DateTime]::UtcNow-$script:CollectionStarted).TotalSeconds -gt 120) { throw '目录选择已保存，但应用超时。请检查采集服务状态后重试。' }
+                try { $current=Invoke-RestMethod -Uri ($script:Config.baseUrl+'/api/v1/status') -TimeoutSec 1 } catch { return }
+                $wanted=@($script:Config.collectionHomes | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
+                $actual=@($current.configured_homes | Where-Object { $_ -notlike '*\.codex-usage-paused-home' } | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
+                if (($wanted -join '|') -ne ($actual -join '|')) { return }
+                if (-not $wanted.Count) {
+                    $script:CollectionMessage.Text='已暂停所有目录的日志采集，历史统计保留。'
+                    $script:CollectionTimer.Stop(); $script:CollectionPhase=''
+                    foreach ($control in $script:CollectionControls) { $control.IsEnabled=$true }
+                    Request-Refresh; return
+                }
+                $script:CollectionPrimary=[string]$script:Config.collectionHomes[0]
+                Start-CollectionCommand 'scan'; $script:CollectionPhase='scanning'
+                $script:CollectionMessage.Text='目录选择已生效，正在扫描勾选目录…'; return
+            }
             if (-not $script:CollectionProcess.HasExited) {
-                if (([DateTime]::UtcNow-$script:CollectionStarted).TotalSeconds -gt 120) { $script:CollectionProcess.Kill(); throw '操作超时；目录可能已保存，可稍后重新扫描。' }
+                if (([DateTime]::UtcNow-$script:CollectionStarted).TotalSeconds -gt 120) { $script:CollectionProcess.Kill(); throw '扫描超时，目录选择已保存。' }
                 return
             }
             if (-not $script:CollectionOutput.IsCompleted -or -not $script:CollectionError.IsCompleted) { return }
@@ -425,22 +483,17 @@ function Show-CollectionSettings {
             $output=$script:CollectionOutput.Result; $errorText=$script:CollectionError.Result
             $script:CollectionProcess.Dispose(); $script:CollectionProcess=$null
             if ($exitCode -ne 0) { throw ($errorText+$output) }
-            if ($script:CollectionPhase -eq 'adding') {
-                $homes=@($script:CollectionList.Text -split "`r?`n" | Where-Object { $_ })
-                if ($homes -notcontains $script:CollectionSelected) { $script:CollectionList.Text=(@($homes)+$script:CollectionSelected) -join "`r`n" }
-                $script:CollectionPhase='scanning'; $script:CollectionMessage.Text='目录已添加，正在补扫历史记录…'
-                Start-CollectionCommand 'scan'; return
-            }
-            $script:CollectionMessage.Text='扫描完成。'+$output.Trim(); Request-Refresh
-            $script:CollectionTimer.Stop(); $script:CollectionAdd.IsEnabled=$true; $script:CollectionBrowse.IsEnabled=$true; $script:CollectionField.IsEnabled=$true
+            $script:CollectionMessage.Text='已应用。'+$output.Trim(); Request-Refresh
+            $script:CollectionTimer.Stop(); $script:CollectionPhase=''
+            foreach ($control in $script:CollectionControls) { $control.IsEnabled=$true }
         } catch {
-            $script:CollectionTimer.Stop(); $script:CollectionMessage.Text=$_.Exception.Message
-            $script:CollectionAdd.IsEnabled=$true; $script:CollectionBrowse.IsEnabled=$true; $script:CollectionField.IsEnabled=$true
+            $script:CollectionTimer.Stop(); $script:CollectionMessage.Text=$_.Exception.Message; $script:CollectionPhase=''
+            foreach ($control in $script:CollectionControls) { $control.IsEnabled=$true }
             if ($script:CollectionProcess) { $script:CollectionProcess.Dispose(); $script:CollectionProcess=$null }
         }
     })
     $dialog.Add_Closing({ param($sender,$eventArgs)
-        if ($script:CollectionProcess) { $eventArgs.Cancel=$true; $script:CollectionMessage.Text='操作进行中，请等待完成后关闭。' }
+        if ($script:CollectionProcess -or $script:CollectionPhase -eq 'applying') { $eventArgs.Cancel=$true; $script:CollectionMessage.Text='操作进行中，请等待完成后关闭。' }
     })
     $dialog.Add_Closed({ $script:CollectionTimer.Stop() })
     [void]$dialog.ShowDialog()

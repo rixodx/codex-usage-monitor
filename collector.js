@@ -126,6 +126,7 @@ async function main() {
   let quotaSnapshot = null;
   let backendState = null;
   let bootstrapPromise = null;
+  let collectionSelectionKey = null;
   const backend = new BackendManager(root, value => {
     backendState = value;
     const state = { ...(previous || { ok: false }), backend: value, quota: quotaSnapshot };
@@ -153,9 +154,17 @@ async function main() {
     try {
       if (fs.existsSync(configFile)) config = JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, ''));
       currentConfig = config;
+      const selectionKey = JSON.stringify(config.collectionHomes ?? null);
+      if (Array.isArray(config.collectionHomes) && selectionKey !== collectionSelectionKey && !backend.pending && !process.argv.includes('--no-bootstrap')) {
+        collectionSelectionKey = selectionKey;
+        bootstrapPromise = backend.ensure(config);
+      }
       if (!bootstrapPromise && !process.argv.includes('--no-bootstrap')) bootstrapPromise = backend.recover(config);
       void quota.refresh(config);
       previous = { ...await collect(config), quota: quotaSnapshot, backend: backendState };
+      if (Array.isArray(config.collectionHomes) && config.collectionHomes.length === 0 && !backend.pending) {
+        previous.backend = { ...backendState, phase: 'paused', text: '日志采集已暂停（未勾选目录）' };
+      }
       await saveState(previous);
     } catch (error) {
       if (!process.argv.includes('--no-bootstrap')) {

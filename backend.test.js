@@ -206,3 +206,49 @@ test('REST rate limits fall back to the official release page and SHA256SUMS', a
   verify(bytes,asset);
   await assert.rejects(latestRelease(async url=>url.endsWith('/latest')&&!url.includes('api.')?Buffer.from('<meta property="og:url" content="https://evil.example/v2.7.2" />'):Promise.reject(new Error('403')),'','x64'));
 });
+
+test('directory selection can disable the default home while retaining history and pricing', async t => {
+  const f=fixture(t,'2.7.2');
+  const main=path.join(f.root,'main'), second=path.join(f.root,'second home');
+  fs.mkdirSync(path.join(main,'sessions'),{recursive:true});
+  fs.mkdirSync(path.join(second,'sessions'),{recursive:true});
+  const cfg=path.join(f.home,'config.json');
+  fs.writeFileSync(cfg,JSON.stringify({extra_codex_homes:[second],port:43189,pricing_overrides:{x:{input_usd_per_million:'1'}}}));
+  const existing={version:'2.7.2',configured_homes:[main,second],status:{database_path:path.join(f.home,'usage.sqlite')}};
+  await f.manager.configureHomes({collectionHomes:[second]},existing,new URL('http://127.0.0.1:43189'));
+  assert.equal(f.manager.collectionPrimary,second);
+  const saved=JSON.parse(fs.readFileSync(cfg));
+  assert.deepEqual(saved.extra_codex_homes,[]);
+  assert.deepEqual(saved.pricing_overrides,{x:{input_usd_per_million:'1'}});
+  assert.equal(fs.readFileSync(path.join(f.home,'usage.sqlite'),'utf8'),'original database');
+  assert.ok(f.calls.some(c=>c[0]==='Stop'));
+  assert.ok(fs.readdirSync(f.home).some(n=>n.startsWith('.codex-usage-homes-backup-')));
+});
+
+test('unchecking all homes scans only a managed empty folder and unchanged selection avoids restart', async t => {
+  const f=fixture(t,'2.7.2');
+  const existing={version:'2.7.2',configured_homes:[path.join(f.root,'main')],status:{database_path:path.join(f.home,'usage.sqlite')}};
+  await f.manager.configureHomes({collectionHomes:[]},existing,new URL('http://127.0.0.1:43189'));
+  const empty=path.join(f.home,'.codex-usage-paused-home');
+  assert.equal(f.manager.collectionPrimary,empty);
+  assert.ok(fs.statSync(path.join(empty,'sessions')).isDirectory());
+  const count=f.calls.length;
+  await f.manager.configureHomes({collectionHomes:[]},{...existing,configured_homes:[empty]},new URL('http://127.0.0.1:43189'));
+  assert.equal(f.calls.length,count);
+});
+
+test('directory apply failure restores previous configuration and original primary home', async t => {
+  const f=fixture(t,'2.7.2');
+  const main=path.join(f.root,'main'), second=path.join(f.root,'second');
+  fs.mkdirSync(path.join(second,'sessions'),{recursive:true});
+  const cfg=path.join(f.home,'config.json'), original=JSON.stringify({extra_codex_homes:[second],port:43189});
+  fs.writeFileSync(cfg,original);
+  const starts=[];
+  f.manager.start=async (file,home,primary)=>{ starts.push(primary || f.manager.collectionPrimary); return 456; };
+  let waits=0;
+  f.manager.wait=async()=>{ if(waits++===0) throw new Error('unhealthy'); return {}; };
+  const existing={version:'2.7.2',configured_homes:[main,second],status:{database_path:path.join(f.home,'usage.sqlite')}};
+  await assert.rejects(f.manager.configureHomes({collectionHomes:[second]},existing,new URL('http://127.0.0.1:43189')),/unhealthy/);
+  assert.equal(fs.readFileSync(cfg,'utf8'),original);
+  assert.deepEqual(starts,[second,main]);
+});

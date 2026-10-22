@@ -84,7 +84,7 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 
 ## 验证
 
-在悬浮窗“··· → 采集目录…”中查看当前采集目录，选择包含 `sessions` 或 `archived_sessions` 的 Codex Home，然后点击“添加并扫描”。支持多个 Codex 实例的独立记录目录，添加后合并统计，原始记录保持不变。扫描在后台运行，完成后自动刷新；重复添加同一目录不会重复配置。此功能需要本地采集服务已启动。
+在悬浮窗“··· → 采集目录…”中勾选参与采集的目录，支持单选、多选和全部取消；可添加新目录、删除所选目录，最后点击“保存并应用”。取消勾选停止该目录后续采集，全部取消时暂停日志采集；删除只移除列表项，不删除原始日志或已入库的历史统计。历史总量不会因取消或删除而减少。目录选择持久保存，应用时自动备份服务配置并重启服务，完成后补扫勾选目录；应用失败时恢复原配置。选择包含 `sessions` 或 `archived_sessions` 的 Codex Home。此功能需要本地采集服务已启动。
 
 运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Package-runtime.ps1` 可制作内置 Node.js 24.22.1 的 Windows x64 最小运行 ZIP 包。打包脚本从 Node.js 官网下载固定版本并核对 SHA-256，仅打包 `node.exe` 和许可证，省去 npm、npx 和头文件。启动时优先使用 `runtime\node.exe`。
 

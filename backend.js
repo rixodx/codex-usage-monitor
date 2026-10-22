@@ -214,9 +214,9 @@ class BackendManager {
     this.report('saved','采集服务已保存，准备启动',{downloadPath:file});
     return file;
   }
-  start(file, home) {
+  start(file, home, codexHome = this.collectionPrimary) {
     const child = this.spawn(file, ['daemon'], { detached: true, windowsHide: true, stdio: 'ignore',
-      env: { ...process.env, CODEX_USAGE_HOME: home } });
+      env: { ...process.env, CODEX_USAGE_HOME: home, ...(codexHome ? { CODEX_HOME: codexHome } : {}) } });
     return new Promise((resolve, reject) => {
       child.once('error', reject);
       child.once('spawn', () => { child.unref(); resolve(child.pid); });
@@ -268,10 +268,59 @@ class BackendManager {
     verify(fs.readFileSync(path.join(this.cache,asset.tag,asset.name)),asset);
     return asset;
   }
+  async configureHomes(config, existing, base) {
+    if (!Array.isArray(config.collectionHomes)) return existing;
+    const selected = [...new Set(config.collectionHomes.map(value => {
+      if (typeof value !== 'string' || !path.isAbsolute(value)) throw new Error('采集目录必须是绝对路径');
+      const folder = path.resolve(value);
+      if (!fs.existsSync(path.join(folder,'sessions')) && !fs.existsSync(path.join(folder,'archived_sessions'))) throw new Error('采集目录不存在或缺少 sessions：'+folder);
+      return folder;
+    }))];
+    const home = existing?.status?.database_path ? path.dirname(existing.status.database_path) : this.home || process.env.CODEX_USAGE_HOME || path.join(process.env.LOCALAPPDATA || path.join(os.homedir(),'AppData','Local'),'codex-usage');
+    this.home = home;
+    const empty = path.join(home,'.codex-usage-paused-home');
+    if (!selected.length) fs.mkdirSync(path.join(empty,'sessions'),{recursive:true});
+    const target = selected.length ? selected : [empty];
+    const key = values => values.map(p=>path.resolve(p).toLowerCase()).sort().join('|');
+    const cfgPath = path.join(home,'config.json');
+    const oldText = fs.existsSync(cfgPath) ? fs.readFileSync(cfgPath,'utf8') : null;
+    const serviceConfig = oldText ? JSON.parse(oldText) : {};
+    const oldPrimary = (existing?.configured_homes || []).find(p=>!(serviceConfig.extra_codex_homes || []).some(extra=>key([p])===key([extra]))) || process.env.CODEX_HOME || path.join(os.homedir(),'.codex');
+    this.collectionPrimary = target[0];
+    if (existing && key(existing.configured_homes || [])===key(target)) return existing;
+    const old = existing ? await this.command('Probe',base) : null;
+    serviceConfig.extra_codex_homes = target.slice(1);
+    fs.mkdirSync(home,{recursive:true});
+    if (oldText !== null) fs.writeFileSync(path.join(home,'.codex-usage-homes-backup-'+Date.now()+'.json'),oldText);
+    const writeConfig = text => {
+      const temp=cfgPath+'.'+crypto.randomBytes(6).toString('hex')+'.tmp';
+      try { fs.writeFileSync(temp,text); fs.renameSync(temp,cfgPath); }
+      finally { if(fs.existsSync(temp)) fs.unlinkSync(temp); }
+    };
+    let stopped=false, startedPid=null;
+    try {
+      writeConfig(JSON.stringify(serviceConfig,null,2));
+      if (old) {
+        this.report('starting','正在应用采集目录…');
+        await this.command('Stop',base,old); stopped=true;
+        startedPid=await this.start(old.path,home);
+        return await this.wait(base,existing.version);
+      }
+      return existing;
+    } catch (error) {
+      if (startedPid) await this.command('StopOwned',base,{pid:startedPid,path:old.path});
+      if (oldText !== null) writeConfig(oldText);
+      else if (fs.existsSync(cfgPath)) fs.unlinkSync(cfgPath);
+      this.collectionPrimary=oldPrimary;
+      if (old && stopped) { await this.start(old.path,home,oldPrimary); await this.wait(base,existing.version); }
+      throw error;
+    }
+  }
   async run(config) {
     const base = serviceBase(config.baseUrl);
     this.report('checking', '检查采集服务版本…', { error:null, warning:null, progress:null, latestVersion:null });
     let existing = await this.inspect(base.origin);
+    existing = await this.configureHomes(config,existing,base);
     if (existing?.status?.database_path) this.home = path.dirname(existing.status.database_path);
     // Recover locally first: GitHub may be slow or unavailable without TUN.
     // The subsequent online check can update this recovered version if needed.
