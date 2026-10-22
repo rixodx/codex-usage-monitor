@@ -12,6 +12,8 @@ GitHub 无法访问时，在窗口“··· → 本地服务地址…”中填�
 
 点击 × 完全退出；— 收起到托盘，双击托盘图标或选择“显示悬浮窗”后保持原来的桌面位置。采集服务独立运行，退出悬浮窗后继续采集。
 
+多个 Codex 实例使用独立记录目录时，在“··· → 采集目录…”选择包含 sessions 或 archived_sessions 的 Codex Home，点击“添加并扫描”即可合并统计。不会移动或删除原始记录。
+
 settings.json、state.json、日志和 .runtime 在运行后生成。此包不含个人设置、账号凭据或统计数据。
 
 上游采集服务：https://github.com/zJay26/codex-usage

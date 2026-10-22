@@ -339,6 +339,109 @@ function Show-ConnectionSettings {
     [void]$dialog.ShowDialog()
 }
 
+function Resolve-CollectionHome([string]$path) {
+    if (-not $path.Trim()) { throw '请选择 Codex 记录目录。' }
+    $folder=Get-Item -LiteralPath $path.Trim() -ErrorAction Stop
+    if (-not $folder.PSIsContainer -or -not (
+        (Test-Path -LiteralPath (Join-Path $folder.FullName 'sessions') -PathType Container) -or
+        (Test-Path -LiteralPath (Join-Path $folder.FullName 'archived_sessions') -PathType Container))) {
+        throw '请选择包含 sessions 或 archived_sessions 的 Codex Home 目录，不是项目目录或 sessions 子目录。'
+    }
+    return $folder.FullName.TrimEnd('\')
+}
+function Start-CollectionCommand([string]$arguments) {
+    $info=New-Object Diagnostics.ProcessStartInfo
+    $info.FileName=$script:CollectionServiceExe; $info.Arguments=$arguments
+    $info.WorkingDirectory=$script:Root; $info.UseShellExecute=$false; $info.CreateNoWindow=$true
+    $info.RedirectStandardOutput=$true; $info.RedirectStandardError=$true
+    $info.StandardOutputEncoding=New-Object Text.UTF8Encoding($false)
+    $info.StandardErrorEncoding=New-Object Text.UTF8Encoding($false)
+    $info.EnvironmentVariables['CODEX_USAGE_HOME']=$script:CollectionServiceHome
+    $script:CollectionProcess=[Diagnostics.Process]::Start($info)
+    $script:CollectionOutput=$script:CollectionProcess.StandardOutput.ReadToEndAsync()
+    $script:CollectionError=$script:CollectionProcess.StandardError.ReadToEndAsync()
+    $script:CollectionStarted=[DateTime]::UtcNow
+}
+function Show-CollectionSettings {
+    try {
+        $uri=[Uri]$script:Config.baseUrl
+        if ($uri.Scheme -ne 'http' -or @('127.0.0.1','localhost','[::1]') -notcontains $uri.Host -or $uri.UserInfo -or $uri.Query -or $uri.Fragment -or $uri.AbsolutePath -ne '/') { throw '请先配置有效的本地服务地址。' }
+        $status=Invoke-RestMethod -Uri ($uri.GetLeftPart([UriPartial]::Authority)+'/api/v1/status') -TimeoutSec 3
+        $script:CollectionServiceHome=Split-Path -Parent ([string]$status.status.database_path)
+        if (-not [IO.Path]::IsPathRooted($script:CollectionServiceHome)) { throw '无法确定采集服务配置目录。' }
+        $manifest=Get-Content -LiteralPath (Join-Path $script:Root '.runtime\release.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+        if ($manifest.tag_name -notmatch '^v?\d+\.\d+\.\d+$') { throw '采集服务缓存版本无效。' }
+        $asset=$manifest.assets | Where-Object { $_.name -match '^codex-usage-windows-(amd64|arm64)\.exe$' } | Select-Object -First 1
+        if ($null -eq $asset -or $asset.digest -notmatch '^sha256:[a-f0-9]{64}$') { throw '采集服务缓存缺少校验信息。' }
+        $script:CollectionServiceExe=Join-Path (Join-Path $script:Root ('.runtime\'+$manifest.tag_name)) $asset.name
+        if ((Get-FileHash -LiteralPath $script:CollectionServiceExe -Algorithm SHA256).Hash -ne $asset.digest.Substring(7)) { throw '采集服务缓存校验失败，请先检查采集服务更新。' }
+    } catch { [void][Windows.MessageBox]::Show('无法读取采集目录，请确认本地采集服务已启动。'+"`n"+$_.Exception.Message,'采集目录'); return }
+    $dialog=New-Object Windows.Window
+    $dialog.Title='采集目录'; $dialog.Width=590; $dialog.Height=520; $dialog.ResizeMode='NoResize'
+    $dialog.WindowStartupLocation='CenterOwner'; $dialog.Owner=$script:Window
+    $dialog.Background='#192328'; $dialog.Foreground='#F3F6F7'; $dialog.FontFamily='Microsoft YaHei UI'
+    $panel=New-Object Windows.Controls.StackPanel; $panel.Margin='20'; $dialog.Content=$panel
+    $label=New-Object Windows.Controls.TextBlock; $label.Text='当前采集目录'; $label.Margin='0,0,0,8'; [void]$panel.Children.Add($label)
+    $list=New-Object Windows.Controls.TextBox; $list.IsReadOnly=$true; $list.AcceptsReturn=$true; $list.Height=105
+    $list.VerticalScrollBarVisibility='Auto'; $list.HorizontalScrollBarVisibility='Auto'; $list.Text=@($status.configured_homes) -join "`r`n"; [void]$panel.Children.Add($list)
+    $hint=New-Object Windows.Controls.TextBlock; $hint.Text='选择包含 sessions 或 archived_sessions 的 Codex Home 目录。添加后合并统计，不移动或删除原始记录。'; $hint.TextWrapping='Wrap'; $hint.Margin='0,14,0,8'; [void]$panel.Children.Add($hint)
+    $field=New-Object Windows.Controls.TextBox; $field.Padding='6'; $field.Margin='0,0,0,8'; [void]$panel.Children.Add($field)
+    $browse=New-Object Windows.Controls.Button; $browse.Content='选择文件夹…'; $browse.Padding='6'; [void]$panel.Children.Add($browse)
+    $message=New-Object Windows.Controls.TextBox; $message.IsReadOnly=$true; $message.TextWrapping='Wrap'; $message.Height=65; $message.VerticalScrollBarVisibility='Auto'; $message.Margin='0,10,0,10'; [void]$panel.Children.Add($message)
+    $add=New-Object Windows.Controls.Button; $add.Content='添加并扫描'; $add.Padding='8'; [void]$panel.Children.Add($add)
+    $script:CollectionField=$field; $script:CollectionList=$list; $script:CollectionMessage=$message
+    $script:CollectionAdd=$add; $script:CollectionBrowse=$browse; $script:CollectionDialog=$dialog
+    $script:CollectionPhase=''; $script:CollectionProcess=$null
+    $browse.Add_Click({
+        $picker=New-Object System.Windows.Forms.FolderBrowserDialog
+        $picker.Description='选择包含 sessions 的 Codex Home 目录'; $picker.ShowNewFolderButton=$false
+        $owner=New-Object System.Windows.Forms.NativeWindow
+        $owner.AssignHandle((New-Object Windows.Interop.WindowInteropHelper($script:CollectionDialog)).Handle)
+        try { if ($picker.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { $script:CollectionField.Text=$picker.SelectedPath } }
+        finally { $owner.ReleaseHandle(); $picker.Dispose() }
+    })
+    $add.Add_Click({
+        try {
+            $script:CollectionSelected=Resolve-CollectionHome $script:CollectionField.Text
+            Start-CollectionCommand ('config add-home "'+$script:CollectionSelected+'"')
+            $script:CollectionPhase='adding'; $script:CollectionAdd.IsEnabled=$false; $script:CollectionBrowse.IsEnabled=$false; $script:CollectionField.IsEnabled=$false
+            $script:CollectionMessage.Text='正在添加目录…'; $script:CollectionTimer.Start()
+        } catch { $script:CollectionMessage.Text=$_.Exception.Message }
+    })
+    $script:CollectionTimer=New-Object Windows.Threading.DispatcherTimer
+    $script:CollectionTimer.Interval=[TimeSpan]::FromMilliseconds(250)
+    $script:CollectionTimer.Add_Tick({
+        try {
+            if (-not $script:CollectionProcess.HasExited) {
+                if (([DateTime]::UtcNow-$script:CollectionStarted).TotalSeconds -gt 120) { $script:CollectionProcess.Kill(); throw '操作超时；目录可能已保存，可稍后重新扫描。' }
+                return
+            }
+            if (-not $script:CollectionOutput.IsCompleted -or -not $script:CollectionError.IsCompleted) { return }
+            $exitCode=$script:CollectionProcess.ExitCode
+            $output=$script:CollectionOutput.Result; $errorText=$script:CollectionError.Result
+            $script:CollectionProcess.Dispose(); $script:CollectionProcess=$null
+            if ($exitCode -ne 0) { throw ($errorText+$output) }
+            if ($script:CollectionPhase -eq 'adding') {
+                $homes=@($script:CollectionList.Text -split "`r?`n" | Where-Object { $_ })
+                if ($homes -notcontains $script:CollectionSelected) { $script:CollectionList.Text=(@($homes)+$script:CollectionSelected) -join "`r`n" }
+                $script:CollectionPhase='scanning'; $script:CollectionMessage.Text='目录已添加，正在补扫历史记录…'
+                Start-CollectionCommand 'scan'; return
+            }
+            $script:CollectionMessage.Text='扫描完成。'+$output.Trim(); Request-Refresh
+            $script:CollectionTimer.Stop(); $script:CollectionAdd.IsEnabled=$true; $script:CollectionBrowse.IsEnabled=$true; $script:CollectionField.IsEnabled=$true
+        } catch {
+            $script:CollectionTimer.Stop(); $script:CollectionMessage.Text=$_.Exception.Message
+            $script:CollectionAdd.IsEnabled=$true; $script:CollectionBrowse.IsEnabled=$true; $script:CollectionField.IsEnabled=$true
+            if ($script:CollectionProcess) { $script:CollectionProcess.Dispose(); $script:CollectionProcess=$null }
+        }
+    })
+    $dialog.Add_Closing({ param($sender,$eventArgs)
+        if ($script:CollectionProcess) { $eventArgs.Cancel=$true; $script:CollectionMessage.Text='操作进行中，请等待完成后关闭。' }
+    })
+    $dialog.Add_Closed({ $script:CollectionTimer.Stop() })
+    [void]$dialog.ShowDialog()
+}
+
 function Add-MenuItem($parent,$header,$action,$value,$checked=$false) {
     $item=New-Object Windows.Controls.MenuItem
     $item.Header=$header; $item.Tag=@{action=$action;value=$value}
@@ -356,6 +459,7 @@ function Add-MenuItem($parent,$header,$action,$value,$checked=$false) {
                 'web' { Open-Dashboard }
                 'pricing' { Open-Dashboard; [void][Windows.MessageBox]::Show('在完整面板中点击「模型定价」即可编辑。悬浮窗会自动使用更新后的价格。','模型定价', 'OK', 'Information') }
                 'connection' { Show-ConnectionSettings }
+                'collectionHomes' { Show-CollectionSettings }
                 'displaySettings' { Show-DisplaySettings }
                 'backendUpdate' { [IO.File]::WriteAllText((Join-Path $script:Root 'backend-update.flag'),'') }
                 'quit' { $script:Window.Close() }
@@ -380,6 +484,7 @@ function New-WidgetMenu {
     [void](Add-MenuItem $menu '完整网页面板' 'web' '')
     [void](Add-MenuItem $menu '模型定价（网页）' 'pricing' '')
     [void](Add-MenuItem $menu '本地服务地址…' 'connection' '')
+    [void](Add-MenuItem $menu '采集目录…' 'collectionHomes' '')
     [void](Add-MenuItem $menu '检查采集服务更新' 'backendUpdate' '')
     [void](Add-MenuItem $menu '退出' 'quit' '')
     return $menu
@@ -470,6 +575,7 @@ if ($SelfTest) {
     }
     Export-Preview 'preview.png'
     $testMenu=New-WidgetMenu
+    if (@($testMenu.Items | Where-Object { $_ -is [Windows.Controls.MenuItem] -and $_.Tag.action -eq 'collectionHomes' }).Count -ne 1) { throw 'Collection directory settings must be accessible from the menu.' }
     $timeItems=@($testMenu.Items | Where-Object { $_ -is [Windows.Controls.MenuItem] -and $_.Tag.action -eq 'period' })
     if ($timeItems.Count -ne 4 -or @($testMenu.Items | Where-Object { $_ -is [Windows.Controls.MenuItem] -and $_.HasItems }).Count -ne 0) { throw 'Menu must expose all time ranges without left/right cascading popups.' }
     if (-not (Test-WindowDragSource $script:UI.TokenValue) -or -not (Test-WindowDragSource $script:UI.CoverageLine)) { throw 'Body and footer must allow window dragging.' }
