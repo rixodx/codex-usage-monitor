@@ -196,11 +196,16 @@ function Apply-View {
     }
     $script:UI.RangeLabel.Text = $script:Labels[$script:Config.period]
 }
+function Get-StatisticsFilterKey {
+    if ($null -eq $script:Config.collectionHomes) { return '*' }
+    return (@($script:Config.collectionHomes | ForEach-Object { ([IO.Path]::GetFullPath([string]$_)).TrimEnd('\').ToLowerInvariant() } | Sort-Object -Unique) -join '|')
+}
 function Paint-State {
     $s=$script:LastState
     Paint-Quota $s.quota
     if (-not $s) { return }
-    $samePeriod = $s.period -eq $script:Config.period
+    $script:UI.RangeLabel.Text=$script:Labels[$script:Config.period]+$(if ($null -ne $script:Config.collectionHomes) { ' · '+@($script:Config.collectionHomes).Count+'个目录' } else { ' · 全部目录' })
+    $samePeriod = $s.period -eq $script:Config.period -and (Get-StatisticsFilterKey) -eq $(if ($s.PSObject.Properties['filterKey']) { [string]$s.filterKey } else { '*' })
     if ($null -ne $s.total -and $samePeriod) {
         $script:UI.TokenValue.Text=Format-Tokens $s.total
         $money='$'+([double]$s.usd).ToString('0.0000',[Globalization.CultureInfo]::InvariantCulture)
@@ -210,7 +215,7 @@ function Paint-State {
         $script:UI.OutputValue.Text=Format-Tokens $s.output
         $script:UI.CompactTokens.Text=(Format-Tokens $s.total)+' tokens'
         $script:UI.CompactCost.Text=$money
-        $script:UI.TokenValue.ToolTip=([double]$s.total).ToString('N0')+' tokens（沿用统计服务总量）'
+        $script:UI.TokenValue.ToolTip=([double]$s.total).ToString('N0')+' tokens'+$(if ($null -ne $script:Config.collectionHomes) { '（仅所选目录）' } else { '（全部目录）' })
         $script:UI.ModelLine.Text=(@($s.models | Select-Object -First 2 | ForEach-Object {$_.name}) -join '  ·  ')
         $script:UI.ModelLine.ToolTip=(@($s.models | ForEach-Object { $_.name+'  '+(Format-Tokens $_.tokens)+' tokens / $'+([double]$_.usd).ToString('0.4') }) -join "`n")
         $coverage='价格覆盖率未知'
@@ -226,7 +231,7 @@ function Paint-State {
         $script:UI.TokenValue.Text='…'; $script:UI.CostValue.Text='…'
         $script:UI.CompactTokens.Text='正在切换…'; $script:UI.CompactCost.Text='…'
         foreach ($key in @('InputValue','CacheValue','OutputValue')) { $script:UI[$key].Text='—' }
-        $script:UI.ModelLine.Text=''; $script:UI.CoverageLine.Text='正在读取所选时间范围'
+        $script:UI.ModelLine.Text=''; $script:UI.CoverageLine.Text='正在读取所选时间和目录'
     }
     $fresh=$false
     if ($s.updatedAt) {
@@ -394,12 +399,12 @@ function Show-CollectionSettings {
         if ($actualHash -ne $asset.digest.Substring(7)) { throw '采集服务缓存校验失败，请先检查采集服务更新。' }
     } catch { [void][Windows.MessageBox]::Show('无法读取采集目录，请确认本地采集服务已启动。'+"`n"+$_.Exception.Message,'采集目录'); return }
     $dialog=New-Object Windows.Window
-    $dialog.Title='采集目录'; $dialog.Width=680; $dialog.Height=550; $dialog.ResizeMode='NoResize'
+    $dialog.Title='统计目录筛选'; $dialog.Width=680; $dialog.Height=550; $dialog.ResizeMode='NoResize'
     $dialog.WindowStartupLocation='CenterOwner'; $dialog.Owner=$script:Window
     $dialog.Background='#192328'; $dialog.Foreground='#F3F6F7'; $dialog.FontFamily='Microsoft YaHei UI'
     $panel=New-Object Windows.Controls.StackPanel; $panel.Margin='20'; $dialog.Content=$panel
     $hint=New-Object Windows.Controls.TextBlock
-    $hint.Text='勾选参与采集的目录；可单选、多选或全部取消。删除只移出列表，不删除原始日志或历史统计。取消勾选只停止后续采集。修改后点击“保存并应用”。'
+    $hint.Text='列表中的目录都会持续采集。勾选只筛选悬浮窗的 token、费用和模型；全部取消显示 0，不停止采集。删除只移除采集配置，不删除日志或历史统计。修改后点击“保存并应用”。'
     $hint.TextWrapping='Wrap'; $hint.Margin='0,0,0,10'; [void]$panel.Children.Add($hint)
     $list=New-Object Windows.Controls.ListBox; $list.Height=165; $list.HorizontalContentAlignment='Stretch'
     $list.SetValue([Windows.Controls.ScrollViewer]::HorizontalScrollBarVisibilityProperty,[Windows.Controls.ScrollBarVisibility]::Auto)
@@ -444,14 +449,14 @@ function Show-CollectionSettings {
     $save.Add_Click({
         try {
             $all=@($script:CollectionList.Items | ForEach-Object { [string]$_.Tag })
-            $selected=@($script:CollectionList.Items | Where-Object { $_.Content.IsChecked } | ForEach-Object { Resolve-CollectionHome ([string]$_.Tag) })
+            $selected=@($script:CollectionList.Items | Where-Object { $_.Content.IsChecked } | ForEach-Object { [string]$_.Tag })
             $script:Config.collectionDirectories=$all; $script:Config.collectionHomes=$selected
-            Save-Settings
+            Save-Settings; Paint-State
             [IO.File]::WriteAllText((Join-Path $script:Root 'backend-update.flag'),'')
             Request-Refresh
             $script:CollectionPhase='applying'; $script:CollectionStarted=[DateTime]::UtcNow
             foreach ($control in $script:CollectionControls) { $control.IsEnabled=$false }
-            $script:CollectionMessage.Text='正在应用目录选择…'; $script:CollectionTimer.Start()
+            $script:CollectionMessage.Text='统计筛选已保存，正在同步采集目录…'; $script:CollectionTimer.Start()
         } catch { $script:CollectionMessage.Text=$_.Exception.Message }
     })
     $script:CollectionTimer=New-Object Windows.Threading.DispatcherTimer
@@ -461,18 +466,18 @@ function Show-CollectionSettings {
             if ($script:CollectionPhase -eq 'applying') {
                 if (([DateTime]::UtcNow-$script:CollectionStarted).TotalSeconds -gt 120) { throw '目录选择已保存，但应用超时。请检查采集服务状态后重试。' }
                 try { $current=Invoke-RestMethod -Uri ($script:Config.baseUrl+'/api/v1/status') -TimeoutSec 1 } catch { return }
-                $wanted=@($script:Config.collectionHomes | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
+                $wanted=@($script:Config.collectionDirectories | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
                 $actual=@($current.configured_homes | Where-Object { $_ -notlike '*\.codex-usage-paused-home' } | ForEach-Object { $_.ToLowerInvariant() } | Sort-Object)
                 if (($wanted -join '|') -ne ($actual -join '|')) { return }
                 if (-not $wanted.Count) {
-                    $script:CollectionMessage.Text='已暂停所有目录的日志采集，历史统计保留。'
+                    $script:CollectionMessage.Text='列表中没有采集目录。统计显示 0，历史数据保留。'
                     $script:CollectionTimer.Stop(); $script:CollectionPhase=''
                     foreach ($control in $script:CollectionControls) { $control.IsEnabled=$true }
                     Request-Refresh; return
                 }
-                $script:CollectionPrimary=[string]$script:Config.collectionHomes[0]
+                $script:CollectionPrimary=[string]$script:Config.collectionDirectories[0]
                 Start-CollectionCommand 'scan'; $script:CollectionPhase='scanning'
-                $script:CollectionMessage.Text='目录选择已生效，正在扫描勾选目录…'; return
+                $script:CollectionMessage.Text='筛选已生效，正在补扫列表中的全部目录…'; return
             }
             if (-not $script:CollectionProcess.HasExited) {
                 if (([DateTime]::UtcNow-$script:CollectionStarted).TotalSeconds -gt 120) { $script:CollectionProcess.Kill(); throw '扫描超时，目录选择已保存。' }
@@ -541,7 +546,7 @@ function New-WidgetMenu {
     [void](Add-MenuItem $menu '完整网页面板' 'web' '')
     [void](Add-MenuItem $menu '模型定价（网页）' 'pricing' '')
     [void](Add-MenuItem $menu '本地服务地址…' 'connection' '')
-    [void](Add-MenuItem $menu '采集目录…' 'collectionHomes' '')
+    [void](Add-MenuItem $menu '目录采集与统计筛选…' 'collectionHomes' '')
     [void](Add-MenuItem $menu '检查采集服务更新' 'backendUpdate' '')
     [void](Add-MenuItem $menu '退出' 'quit' '')
     return $menu
@@ -641,6 +646,13 @@ if ($SelfTest) {
         $buttonSurface=$button.Template.FindName('ButtonBorder',$button)
         if ((Test-WindowDragSource $button) -or (Test-WindowDragSource $buttonSurface)) { throw 'Interactive buttons must not start window dragging.' }
     }
+    $originalFilter=$script:Config.collectionHomes
+    $originalFilterKey=if ($script:LastState.PSObject.Properties['filterKey']) { $script:LastState.filterKey } else { '*' }
+    $script:Config.collectionHomes=@('C:\filter-test')
+    $script:LastState | Add-Member -NotePropertyName filterKey -NotePropertyValue 'c:\other-home' -Force
+    Paint-State
+    if ($script:UI.TokenValue.Text -ne '…' -or $script:UI.CostValue.Text -ne '…' -or $script:UI.ModelLine.Text) { throw 'Switching directory filters must hide all previous totals and models.' }
+    $script:Config.collectionHomes=$originalFilter; $script:LastState.filterKey=$originalFilterKey; Paint-State
     $originalTokens=$script:UI.TokenValue.Text
     $script:LastState.ok=$false
     $script:LastState | Add-Member -NotePropertyName error -NotePropertyValue 'Test: service unavailable' -Force

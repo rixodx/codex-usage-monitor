@@ -20,7 +20,7 @@ if (-not (Test-Path -LiteralPath $archive) -or (Get-FileHash -LiteralPath $archi
 if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash -ne $expected) { throw 'Node.js SHA-256 verification failed.' }
 $stage = Join-Path $cache ([Guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory((Join-Path $stage 'runtime'))
-$files = @('codex-usage-monitor.exe','Widget.ps1','collector.js','quota.js','backend.js','service-control.ps1','THIRD_PARTY_NOTICES.md')
+$files = @('codex-usage-monitor.exe','Widget.ps1','collector.js','directory-stats.js','quota.js','backend.js','service-control.ps1','THIRD_PARTY_NOTICES.md')
 foreach ($name in $files) { Copy-Item -LiteralPath (Join-Path $root $name) -Destination (Join-Path $stage $name) }
 Copy-Item -LiteralPath (Join-Path $root 'README.runtime.md') -Destination (Join-Path $stage 'README.md')
 $zip = [IO.Compression.ZipFile]::OpenRead($archive)
@@ -34,7 +34,7 @@ try {
 $node = Join-Path $stage 'runtime\node.exe'
 $actualVersion = & $node --version
 if ($LASTEXITCODE -ne 0 -or $actualVersion -ne "v$version") { throw 'Bundled Node.js version check failed.' }
-foreach ($name in @('collector.js','quota.js','backend.js')) {
+foreach ($name in @('collector.js','directory-stats.js','quota.js','backend.js')) {
     & $node --check (Join-Path $stage $name)
     if ($LASTEXITCODE -ne 0) { throw "JavaScript syntax check failed: $name" }
 }

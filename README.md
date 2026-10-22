@@ -84,7 +84,7 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 
 ## 验证
 
-在悬浮窗“··· → 采集目录…”中勾选参与采集的目录，支持单选、多选和全部取消；可添加新目录、删除所选目录，最后点击“保存并应用”。取消勾选停止该目录后续采集，全部取消时暂停日志采集；删除只移除列表项，不删除原始日志或已入库的历史统计。历史总量不会因取消或删除而减少。目录选择持久保存，应用时自动备份服务配置并重启服务，完成后补扫勾选目录；应用失败时恢复原配置。选择包含 `sessions` 或 `archived_sessions` 的 Codex Home。此功能需要本地采集服务已启动。
+在悬浮窗“··· → 目录采集与统计筛选…”中管理目录。列表中的全部目录持续采集，勾选只控制悬浮窗的 token、费用和模型列表，支持单选、多选和全部取消（显示 0）；不会因取消勾选停止采集。点击“保存并应用”生效。删除目录只移除采集配置，不删除原始日志或历史数据；不在列表里的历史记录也可重新添加目录后筛选。费用使用本地服务价格表和自定义价格，以标准 API 价格计算，分类异常的 token 保留为未计价。订阅额度是账号整体额度，不随目录筛选。新增目录需包含 `sessions` 或 `archived_sessions`。应用采集目录变更时备份配置并重启服务；仅切换统计勾选不会改变采集范围。
 
 运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Package-runtime.ps1` 可制作内置 Node.js 24.22.1 的 Windows x64 最小运行 ZIP 包。打包脚本从 Node.js 官网下载固定版本并核对 SHA-256，仅打包 `node.exe` 和许可证，省去 npm、npx 和头文件。启动时优先使用 `runtime\node.exe`。
 
@@ -93,6 +93,7 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 
 ```powershell
 node collector.test.js
+node directory-stats.test.js
 node quota.test.js
 node backend.test.js
 node collector.js --once --no-bootstrap

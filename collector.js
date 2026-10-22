@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { QuotaProvider } = require('./quota');
 const { BackendManager } = require('./backend');
+const { selectionKey, filterStatistics } = require('./directory-stats');
 
 function number(value) {
   const n = Number(value);
@@ -79,13 +80,24 @@ async function collect(config, request = fetch) {
   const base = baseUrl(config.baseUrl);
   const period = ['today', 'week', 'month', '30days'].includes(config.period) ? config.period : 'today';
   const query = new URLSearchParams(bounds(period)).toString();
+  if (Array.isArray(config.collectionHomes)) {
+    const [events,pricing,status] = await Promise.all([
+      readJson(base,'/api/v1/export?'+query+'&format=json',request),
+      readJson(base,'/api/v1/pricing',request),
+      readJson(base,'/api/v1/status',request),
+    ]);
+    const {summary,report}=filterStatistics(events,pricing,config.collectionHomes);
+    const result=summarize(summary,report,status,period);
+    if (status.status?.warning_count) result.warnings.push('采集服务有历史覆盖提示，详见完整面板');
+    return {...result,baseUrl:base,directoryFilter:config.collectionHomes,filterKey:selectionKey(config.collectionHomes)};
+  }
   // Standard API-equivalent basis, deliberately excluding subscription Fast-credit multipliers.
   const [summary, report, status] = await Promise.all([
     readJson(base, '/api/v1/summary?' + query, request),
     readJson(base, '/api/v1/cost-estimate?' + query, request),
     readJson(base, '/api/v1/status', request),
   ]);
-  return { ...summarize(summary, report, status, period), baseUrl: base };
+  return { ...summarize(summary, report, status, period), baseUrl: base, filterKey:'*' };
 }
 
 let writeSequence = 0;
@@ -154,17 +166,14 @@ async function main() {
     try {
       if (fs.existsSync(configFile)) config = JSON.parse(fs.readFileSync(configFile, 'utf8').replace(/^\uFEFF/, ''));
       currentConfig = config;
-      const selectionKey = JSON.stringify(config.collectionHomes ?? null);
-      if (Array.isArray(config.collectionHomes) && selectionKey !== collectionSelectionKey && !backend.pending && !process.argv.includes('--no-bootstrap')) {
-        collectionSelectionKey = selectionKey;
+      const captureKey = JSON.stringify(config.collectionDirectories ?? null);
+      if (Array.isArray(config.collectionDirectories) && captureKey !== collectionSelectionKey && !backend.pending && !process.argv.includes('--no-bootstrap')) {
+        collectionSelectionKey = captureKey;
         bootstrapPromise = backend.ensure(config);
       }
       if (!bootstrapPromise && !process.argv.includes('--no-bootstrap')) bootstrapPromise = backend.recover(config);
       void quota.refresh(config);
       previous = { ...await collect(config), quota: quotaSnapshot, backend: backendState };
-      if (Array.isArray(config.collectionHomes) && config.collectionHomes.length === 0 && !backend.pending) {
-        previous.backend = { ...backendState, phase: 'paused', text: '日志采集已暂停（未勾选目录）' };
-      }
       await saveState(previous);
     } catch (error) {
       if (!process.argv.includes('--no-bootstrap')) {

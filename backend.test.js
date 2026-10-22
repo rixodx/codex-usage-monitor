@@ -215,7 +215,7 @@ test('directory selection can disable the default home while retaining history a
   const cfg=path.join(f.home,'config.json');
   fs.writeFileSync(cfg,JSON.stringify({extra_codex_homes:[second],port:43189,pricing_overrides:{x:{input_usd_per_million:'1'}}}));
   const existing={version:'2.7.2',configured_homes:[main,second],status:{database_path:path.join(f.home,'usage.sqlite')}};
-  await f.manager.configureHomes({collectionHomes:[second]},existing,new URL('http://127.0.0.1:43189'));
+  await f.manager.configureHomes({collectionDirectories:[second]},existing,new URL('http://127.0.0.1:43189'));
   assert.equal(f.manager.collectionPrimary,second);
   const saved=JSON.parse(fs.readFileSync(cfg));
   assert.deepEqual(saved.extra_codex_homes,[]);
@@ -228,12 +228,12 @@ test('directory selection can disable the default home while retaining history a
 test('unchecking all homes scans only a managed empty folder and unchanged selection avoids restart', async t => {
   const f=fixture(t,'2.7.2');
   const existing={version:'2.7.2',configured_homes:[path.join(f.root,'main')],status:{database_path:path.join(f.home,'usage.sqlite')}};
-  await f.manager.configureHomes({collectionHomes:[]},existing,new URL('http://127.0.0.1:43189'));
+  await f.manager.configureHomes({collectionDirectories:[]},existing,new URL('http://127.0.0.1:43189'));
   const empty=path.join(f.home,'.codex-usage-paused-home');
   assert.equal(f.manager.collectionPrimary,empty);
   assert.ok(fs.statSync(path.join(empty,'sessions')).isDirectory());
   const count=f.calls.length;
-  await f.manager.configureHomes({collectionHomes:[]},{...existing,configured_homes:[empty]},new URL('http://127.0.0.1:43189'));
+  await f.manager.configureHomes({collectionDirectories:[]},{...existing,configured_homes:[empty]},new URL('http://127.0.0.1:43189'));
   assert.equal(f.calls.length,count);
 });
 
@@ -248,7 +248,14 @@ test('directory apply failure restores previous configuration and original prima
   let waits=0;
   f.manager.wait=async()=>{ if(waits++===0) throw new Error('unhealthy'); return {}; };
   const existing={version:'2.7.2',configured_homes:[main,second],status:{database_path:path.join(f.home,'usage.sqlite')}};
-  await assert.rejects(f.manager.configureHomes({collectionHomes:[second]},existing,new URL('http://127.0.0.1:43189')),/unhealthy/);
+  await assert.rejects(f.manager.configureHomes({collectionDirectories:[second]},existing,new URL('http://127.0.0.1:43189')),/unhealthy/);
   assert.equal(fs.readFileSync(cfg,'utf8'),original);
   assert.deepEqual(starts,[second,main]);
+});
+
+test('statistics checkbox changes never reconfigure capture directories', async t => {
+  const f=fixture(t,'2.7.2');
+  const existing={version:'2.7.2',configured_homes:['C:\\first','C:\\second'],status:{database_path:path.join(f.home,'usage.sqlite')}};
+  const result=await f.manager.configureHomes({collectionHomes:['C:\\first']},existing,new URL('http://127.0.0.1:43189'));
+  assert.equal(result,existing); assert.equal(f.calls.length,0);
 });

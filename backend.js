@@ -269,8 +269,8 @@ class BackendManager {
     return asset;
   }
   async configureHomes(config, existing, base) {
-    if (!Array.isArray(config.collectionHomes)) return existing;
-    const selected = [...new Set(config.collectionHomes.map(value => {
+    if (!Array.isArray(config.collectionDirectories)) return existing;
+    const selected = [...new Set(config.collectionDirectories.map(value => {
       if (typeof value !== 'string' || !path.isAbsolute(value)) throw new Error('采集目录必须是绝对路径');
       const folder = path.resolve(value);
       if (!fs.existsSync(path.join(folder,'sessions')) && !fs.existsSync(path.join(folder,'archived_sessions'))) throw new Error('采集目录不存在或缺少 sessions：'+folder);
