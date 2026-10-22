@@ -2,7 +2,7 @@
 
 Windows 桌面用量悬浮窗。完整解压到可写目录，双击 codex-usage-monitor.exe。
 
-运行环境：Windows PowerShell 5.1、.NET Framework（Windows 通常自带），以及已安装的 Node.js 18 或更高版本。此最小包不包含 Node.js。
+运行环境：Windows PowerShell 5.1、.NET Framework（Windows 通常自带）。Windows x64 运行包已内置 Node.js 24.22.1，仅包含必要的 node.exe 和许可证，无需单独安装 Node.js 或 npm。请保留 runtime 文件夹；程序优先使用 runtime\node.exe，缺少时才尝试系统安装的 Node.js 18+。
 
 采集服务会在缺少时自动下载、启动，有新版时更新。服务意外关闭后自动恢复；失败每 30 秒重试。下载内容会进行 SHA-256 校验。
 
@@ -15,5 +15,5 @@ GitHub 无法访问时，在窗口“··· → 本地服务地址…”中填�
 settings.json、state.json、日志和 .runtime 在运行后生成。此包不含个人设置、账号凭据或统计数据。
 
 上游采集服务：https://github.com/zJay26/codex-usage
-项目源码：https://github.com/rixodx/codex-usage-widget
+项目源码：https://github.com/rixodx/codex-usage-monitor
 第三方说明见 THIRD_PARTY_NOTICES.md。

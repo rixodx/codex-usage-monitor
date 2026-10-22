@@ -538,7 +538,8 @@ $script:Tray.ContextMenuStrip=$trayMenu
 Apply-View
 Save-Settings
 try {
-    $node=(Get-Command node.exe -ErrorAction Stop).Source
+    $node=Join-Path $script:Root 'runtime\node.exe'
+    if (-not (Test-Path -LiteralPath $node)) { $node=(Get-Command node.exe -ErrorAction Stop).Source }
     # .NET avoids the Windows PowerShell Start-Process PATH/Path duplicate-key bug.
     $workerInfo=New-Object Diagnostics.ProcessStartInfo
     $workerInfo.FileName=$node
@@ -549,7 +550,7 @@ try {
     $script:Worker=[Diagnostics.Process]::Start($workerInfo)
 } catch {
     [IO.File]::WriteAllText((Join-Path $script:Root 'widget-error.log'), ($_ | Out-String), (New-Object Text.UTF8Encoding($false)))
-    [void][Windows.MessageBox]::Show('启动采集器失败，请安装 Node.js 18 或以上版本。'+"`n"+$_.Exception.Message,'codex-usage-monitor')
+    [void][Windows.MessageBox]::Show('启动采集器失败，请完整解压包含 runtime 文件夹的运行包，或安装 Node.js 18 或以上版本。'+"`n"+$_.Exception.Message,'codex-usage-monitor')
     $script:Tray.Dispose(); $script:Mutex.ReleaseMutex(); $script:Mutex.Dispose(); exit 1
 }
 $script:Timer=New-Object Windows.Threading.DispatcherTimer

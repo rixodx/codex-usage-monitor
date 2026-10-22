@@ -8,11 +8,11 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 
 ## 启动
 
-最小运行包仅包含 EXE、窗口与采集脚本、第三方说明和简要使用说明；不包含源码、测试、个人设置、统计记录或已下载的服务缓存。完整解压后运行 `codex-usage-monitor.exe`。仍需 Windows 自带的 PowerShell / .NET Framework，以及已安装的 Node.js 18+。
+最小运行包包含 EXE、窗口与采集脚本、精简 Node.js 运行环境、许可证和简要使用说明；不包含开发源码、测试、个人设置、统计记录或已下载的服务缓存。完整解压后运行 `codex-usage-monitor.exe`，无需单独安装 Node.js。仍需 Windows 自带的 PowerShell / .NET Framework。
 
 1. 完整解压到可写目录。
 2. 双击 **codex-usage-monitor.exe**（不弹终端），或 **Start.cmd**，自动检查并启动采集服务。
-3. 保持本文件夹可写；需要 Windows PowerShell 5.1、.NET Framework 和 Node.js 18+。
+3. 保持本文件夹可写；需要 Windows PowerShell 5.1 和 .NET Framework。Windows x64 运行包自带 Node.js；从源码运行时可使用系统安装的 Node.js 18+。
 
 下载后先完整解压，再运行。`Start.vbs` 和 `Start.cmd` 也是可用入口。
 首次启动缺少采集服务时，从上游 GitHub Release 下载最新 Windows 正式版；不需要手动安装 codex-usage。
@@ -83,6 +83,8 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 更新脚本时可保留 settings.json 和 `.runtime`。移除悬浮窗前先退出；采集服务和统计数据独立保留，正在运行的 EXE 可能需要先结束再删除其缓存目录。
 
 ## 验证
+
+运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Package-runtime.ps1` 可制作内置 Node.js 24.22.1 的 Windows x64 最小运行 ZIP 包。打包脚本从 Node.js 官网下载固定版本并核对 SHA-256，仅打包 `node.exe` 和许可证，省去 npm、npx 和头文件。启动时优先使用 `runtime\node.exe`。
 
 如需从源码重建启动器，双击 `Build.cmd`。它使用 Windows 自带 .NET Framework 的 C# 编译器，不需要额外的 .NET SDK。
 编译后运行 `codex-usage-monitor.exe`、`Start.cmd` 或 `Start.vbs`。

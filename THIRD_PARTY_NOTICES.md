@@ -1,5 +1,12 @@
 # Third-party acknowledgments
 
+## Bundled Node.js runtime
+
+The Windows x64 portable package includes the official Node.js v24.22.1
+`node.exe`, distributed under the MIT license and the third-party terms
+included in `runtime/LICENSE`. The complete upstream license file is preserved
+in the package. Source and releases: https://nodejs.org/dist/v24.22.1/.
+
 The quota integration was inspired by the `account/rateLimits/read` app-server
 transport in [Justin-147/codex-usage-hud](https://github.com/Justin-147/codex-usage-hud).
 This widget implements its own transport, quota normalization, local snapshot
