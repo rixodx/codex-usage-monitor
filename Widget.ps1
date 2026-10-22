@@ -374,7 +374,11 @@ function Show-CollectionSettings {
         $asset=$manifest.assets | Where-Object { $_.name -match '^codex-usage-windows-(amd64|arm64)\.exe$' } | Select-Object -First 1
         if ($null -eq $asset -or $asset.digest -notmatch '^sha256:[a-f0-9]{64}$') { throw '采集服务缓存缺少校验信息。' }
         $script:CollectionServiceExe=Join-Path (Join-Path $script:Root ('.runtime\'+$manifest.tag_name)) $asset.name
-        if ((Get-FileHash -LiteralPath $script:CollectionServiceExe -Algorithm SHA256).Hash -ne $asset.digest.Substring(7)) { throw '采集服务缓存校验失败，请先检查采集服务更新。' }
+        $hashStream=[IO.File]::OpenRead($script:CollectionServiceExe)
+        $sha256=[Security.Cryptography.SHA256]::Create()
+        try { $actualHash=[BitConverter]::ToString($sha256.ComputeHash($hashStream)).Replace('-','').ToLowerInvariant() }
+        finally { $hashStream.Dispose(); $sha256.Dispose() }
+        if ($actualHash -ne $asset.digest.Substring(7)) { throw '采集服务缓存校验失败，请先检查采集服务更新。' }
     } catch { [void][Windows.MessageBox]::Show('无法读取采集目录，请确认本地采集服务已启动。'+"`n"+$_.Exception.Message,'采集目录'); return }
     $dialog=New-Object Windows.Window
     $dialog.Title='采集目录'; $dialog.Width=590; $dialog.Height=520; $dialog.ResizeMode='NoResize'
