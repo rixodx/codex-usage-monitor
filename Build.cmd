@@ -7,5 +7,7 @@ if not exist "%WIDGET_CSC%" (
     echo .NET Framework C# compiler was not found.
     exit /b 1
 )
-"%WIDGET_CSC%" /nologo /target:winexe /codepage:65001 /reference:System.Windows.Forms.dll /out:codex-usage-monitor.exe Launcher.cs DesktopIdentity.cs
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Build-Icon.ps1"
+if errorlevel 1 exit /b %errorlevel%
+"%WIDGET_CSC%" /nologo /target:winexe /codepage:65001 /reference:System.Windows.Forms.dll /win32icon:assets\app.ico /out:codex-usage-monitor.exe Launcher.cs DesktopIdentity.cs
 exit /b %errorlevel%

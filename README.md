@@ -88,7 +88,7 @@ Windows 原生置顶小窗，连接 **[zJay26/codex-usage](https://github.com/zJ
 
 运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\Package-runtime.ps1` 可制作内置 Node.js 24.22.1 的 Windows x64 最小运行 ZIP 包。打包脚本从 Node.js 官网下载固定版本并核对 SHA-256，仅打包 `node.exe` 和许可证，省去 npm、npx 和头文件。启动时优先使用 `runtime\node.exe`。
 
-如需从源码重建启动器，双击 `Build.cmd`。它使用 Windows 自带 .NET Framework 的 C# 编译器，不需要额外的 .NET SDK。
+如需从源码重建启动器，双击 `Build.cmd`。它使用 Windows 自带 .NET Framework 的 C# 编译器，不需要额外的 .NET SDK。构建时由 `Build-Icon.ps1` 生成深色底、薄荷绿仪表环与用量柱形图标，嵌入启动器；悬浮窗和托盘共用此图标。图标包含 16–256 像素的 9 种尺寸，源码及预览位于 `assets`，运行包无需另带图标文件。
 编译后运行 `codex-usage-monitor.exe`、`Start.cmd` 或 `Start.vbs`。
 
 ```powershell

@@ -122,6 +122,8 @@ $script:Labels = @{today='今日'; week='近 7 天'; month='本月'; '30days'='�
 '@
 $reader = New-Object System.Xml.XmlNodeReader $layout
 $script:Window = [Windows.Markup.XamlReader]::Load($reader)
+$script:AppIcon=if(Test-Path -LiteralPath $identityAssembly) { [Drawing.Icon]::ExtractAssociatedIcon($identityAssembly) } else { [Drawing.SystemIcons]::Information.Clone() }
+$script:Window.Icon=[Windows.Interop.Imaging]::CreateBitmapSourceFromHIcon($script:AppIcon.Handle,[Windows.Int32Rect]::Empty,[Windows.Media.Imaging.BitmapSizeOptions]::FromEmptyOptions())
 $script:UI = @{}
 foreach ($name in @('DragArea','StatusDot','MenuButton','HideButton','CloseButton','FullView','CompactView','RangeLabel','TokenValue','CostValue','InputValue','CacheValue','OutputValue','ModelLine','CoverageLine','CompactTokens','CompactCost','DetailButton','StatusLine','FiveHourValue','FiveHourReset','FiveHourBar','SevenDayValue','SevenDayReset','SevenDayBar','QuotaStatus')) {
     $script:UI[$name] = $script:Window.FindName($name)
@@ -701,7 +703,7 @@ $script:Window.Add_PreviewMouseMove({ param($sender,$eventArgs)
 $script:Window.Add_PreviewMouseLeftButtonUp({ $script:DragStart=$null })
 $script:Window.Add_Deactivated({ $script:DragStart=$null })
 $script:Tray=New-Object System.Windows.Forms.NotifyIcon
-$script:Tray.Icon=[Drawing.SystemIcons]::Information
+$script:Tray.Icon=$script:AppIcon
 $script:Tray.Text='codex-usage-monitor'; $script:Tray.Visible=$true
 $script:Tray.Add_DoubleClick({ Show-Widget })
 $trayMenu=New-Object System.Windows.Forms.ContextMenuStrip
@@ -753,7 +755,7 @@ $script:Window.Add_Closed({
     $script:Timer.Stop()
     try { Save-Settings } catch { }
     if ($script:Worker -and -not $script:Worker.HasExited) { Stop-Process -Id $script:Worker.Id -ErrorAction SilentlyContinue }
-    $script:Tray.Visible=$false; $script:Tray.Dispose()
+    $script:Tray.Visible=$false; $script:Tray.Dispose(); $script:AppIcon.Dispose()
     $script:Mutex.ReleaseMutex(); $script:Mutex.Dispose()
 })
 $script:Timer.Start()
